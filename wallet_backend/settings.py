@@ -11,6 +11,11 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qsl
+
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,9 +44,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
-    # Register the app that contains your models and views. Use the full
-    # dotted path to avoid colliding with the top-level empty `wallet` package.
-    'wallet_app.wallet',
+    # The app is located at the project root as `wallet`.
+    'wallet',
 ]
 
 REST_FRAMEWORK = {
@@ -49,6 +53,7 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -83,10 +88,16 @@ WSGI_APPLICATION = 'wallet_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': tmpPostgres.path.replace('/', ''),
+        'USER': tmpPostgres.username,
+        'PASSWORD': tmpPostgres.password,
+        'HOST': tmpPostgres.hostname,
+        'PORT': 5432,
+        'OPTIONS': dict(parse_qsl(tmpPostgres.query)),
     }
 }
 

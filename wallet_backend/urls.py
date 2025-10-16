@@ -22,13 +22,14 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
+# No rlpatterns variable needed — define urlpatterns below.
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     # Redirect root URL to the API index so visiting '/' doesn't 404.
     path('', lambda request: HttpResponseRedirect('/api/')),
-    # Avoid importing the top-level `wallet` package (which is empty). Point to the
-    # app package under `wallet_app` where the real urls.py lives.
-    path('api/', include('wallet_app.wallet.urls')),
+    # Include the app's URLs. The app lives at the project root as `wallet`.
+    path('api/', include('wallet.urls')),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
