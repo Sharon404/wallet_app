@@ -1,0 +1,56 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<h1 style="margin-bottom:20px;">💳 Wallet System Dashboard</h1>
+
+<div style="display: flex; flex-wrap: wrap; gap: 20px;">
+  <div style="flex:1; min-width:250px; background:#2d6a4f; color:white; padding:15px; border-radius:10px;">
+    <h2>Total Wallets</h2>
+    <h3>{{ total_wallets }}</h3>
+  </div>
+  <div style="flex:1; min-width:250px; background:#40916c; color:white; padding:15px; border-radius:10px;">
+    <h2>Total Balance</h2>
+    <h3>Ksh {{ total_balance|floatformat:2 }}</h3>
+  </div>
+  <div style="flex:1; min-width:250px; background:#74c69d; color:white; padding:15px; border-radius:10px;">
+    <h2>Total Deposits</h2>
+    <h3>Ksh {{ total_deposits|floatformat:2 }}</h3>
+  </div>
+  <div style="flex:1; min-width:250px; background:#95d5b2; color:white; padding:15px; border-radius:10px;">
+    <h2>Total Withdrawals</h2>
+    <h3>Ksh {{ total_withdrawals|floatformat:2 }}</h3>
+  </div>
+  <div style="flex:1; min-width:250px; background:#b7e4c7; color:black; padding:15px; border-radius:10px;">
+    <h2>Total Transfers</h2>
+    <h3>Ksh {{ total_transfers|floatformat:2 }}</h3>
+  </div>
+</div>
+
+<h2 style="margin-top:40px;">🕒 Recent Transactions</h2>
+<table class="admin-table" style="width:100%; border-collapse:collapse; margin-top:10px;">
+  <thead>
+    <tr style="background:#e9ecef;">
+      <th>User</th>
+      <th>Type</th>
+      <th>Amount</th>
+      <th>Description</th>
+      <th>Timestamp</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for tx in recent_transactions %}
+      <tr>
+        <td>{{ tx.wallet.user.username }}</td>
+        <td>{{ tx.transaction_type }}</td>
+        <td>Ksh {{ tx.amount|floatformat:2 }}</td>
+        <td>{{ tx.description }}</td>
+        <td>{{ tx.timestamp|date:"Y-m-d H:i" }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5">No transactions yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
