@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.template.response import TemplateResponse
 from django.db.models import Sum
 from .models import Wallet, Transaction
+from django.contrib.auth.models import User, Group
 
 
 class CustomAdminSite(admin.AdminSite):
@@ -38,5 +39,7 @@ class CustomAdminSite(admin.AdminSite):
 dashboard_admin_site = CustomAdminSite(name='dashboard_admin')
 
 # Register models
+dashboard_admin_site.register(User)
+dashboard_admin_site.register(Group)
 dashboard_admin_site.register(Wallet)
 dashboard_admin_site.register(Transaction)

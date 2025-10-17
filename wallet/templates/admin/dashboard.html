@@ -1,0 +1,142 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<style>
+  .dashboard-header {
+    margin-bottom: 30px;
+    font-size: 28px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .cards-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+
+  .stat-card {
+    flex: 1;
+    min-width: 220px;
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.15);
+  }
+
+  .stat-card h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  .stat-card h3 {
+    font-size: 24px;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .bg-dark-green { background: #2c7154; }
+  .bg-green { background: #327557; }
+  .bg-mid-green { background: #40916c; }
+  .bg-light-green { background: #74c69d; }
+  .bg-pale-green { background: #95d5b2; color: #000; }
+
+  table.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  table.admin-table th, table.admin-table td {
+    padding: 10px 15px;
+    text-align: left;
+  }
+
+  table.admin-table thead {
+    background: #e9ecef;
+  }
+
+  table.admin-table tbody tr:nth-child(even) {
+    background: #f8f9fa;
+  }
+
+  table.admin-table tbody tr:hover {
+    background: #edf6f0;
+  }
+
+  h2.section-title {
+    margin-top: 50px;
+    font-size: 22px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+</style>
+
+<h1 class="dashboard-header">💳 Wallet System Dashboard</h1>
+
+<div class="cards-container">
+  <div class="stat-card bg-dark-green">
+    <h2>Total Wallets</h2>
+    <h3>{{ total_wallets }}</h3>
+  </div>
+  <div class="stat-card bg-green">
+    <h2>Total Balance</h2>
+    <h3>Ksh {{ total_balance|floatformat:2 }}</h3>
+  </div>
+  <div class="stat-card bg-mid-green">
+    <h2>Total Deposits</h2>
+    <h3>Ksh {{ total_deposits|floatformat:2 }}</h3>
+  </div>
+  <div class="stat-card bg-light-green">
+    <h2>Total Withdrawals</h2>
+    <h3>Ksh {{ total_withdrawals|floatformat:2 }}</h3>
+  </div>
+  <div class="stat-card bg-pale-green">
+    <h2>Total Transfers</h2>
+    <h3>Ksh {{ total_transfers|floatformat:2 }}</h3>
+  </div>
+</div>
+
+<h2 class="section-title">🕒 Recent Transactions</h2>
+
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>User</th>
+      <th>Type</th>
+      <th>Amount</th>
+      <th>Description</th>
+      <th>Timestamp</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for tx in recent_transactions %}
+      <tr>
+        <td>{{ tx.wallet.user.username }}</td>
+        <td>{{ tx.transaction_type }}</td>
+        <td>Ksh {{ tx.amount|floatformat:2 }}</td>
+        <td>{{ tx.description }}</td>
+        <td>{{ tx.timestamp|date:"Y-m-d H:i" }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" style="text-align:center;">No transactions yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
