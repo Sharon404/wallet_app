@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.db.models import Sum
 from django.utils.html import format_html
 from .models import Wallet, Transaction
+from .dashboard_admin import CustomAdminSite
 
 
 # --- Inline Transactions ---
@@ -94,3 +95,10 @@ class TransactionAdmin(admin.ModelAdmin):
         color = 'green' if obj.transaction_type == 'DEPOSIT' else 'red' if obj.transaction_type == 'WITHDRAWAL' else '#555'
         return format_html(f'<b style="color:{color};">Ksh {obj.amount:,.2f}</b>')
     formatted_amount.short_description = 'Amount'
+
+# --- Register custom admin site ---
+custom_admin_site = CustomAdminSite(name='custom_admin')
+
+
+custom_admin_site.register(Wallet)
+custom_admin_site.register(Transaction)

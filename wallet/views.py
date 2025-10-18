@@ -5,7 +5,42 @@ from rest_framework.views import APIView
 from django.contrib.auth.models import User
 from .models import Wallet, Transaction
 from .serializers import WalletSerializer, TransactionSerializer
+from django.contrib.auth.hashers import make_password
+from rest_framework import status
+from rest_framework.decorators import api_view
 
+
+@api_view(['POST'])
+def register_user(request):
+    username = request.data.get('username')
+    email = request.data.get('email')
+    password = request.data.get('password')
+
+    if not username or not password:
+        return Response(
+            {'error': 'Username and password are required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if User.objects.filter(username=username).exists():
+        return Response(
+            {'error': 'Username already exists.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    user = User.objects.create(
+        username=username,
+        email=email,
+        password=make_password(password)
+    )
+
+    wallet = Wallet.objects.create(user=user, balance=0)
+
+    return Response({
+        'message': 'User registered successfully!',
+        'username': user.username,
+        'wallet_id': wallet.id
+    }, status=status.HTTP_201_CREATED)
 
 class WalletView(APIView):
     permission_classes = [permissions.IsAuthenticated]
