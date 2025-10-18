@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     # The app is located at the project root as `wallet`.
     'wallet',
+    'corsheaders',
+    
 ]
 
 REST_FRAMEWORK = {
@@ -63,9 +65,13 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
 ]
 
 ROOT_URLCONF = 'wallet_backend.urls'
+
+CORS_ALLOW_ALL_ORIGINS = True  # for testing only
 
 TEMPLATES = [
     {

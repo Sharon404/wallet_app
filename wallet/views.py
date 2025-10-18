@@ -10,17 +10,25 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 
 
+
 @api_view(['POST'])
 def register_user(request):
+    first_name = request.data.get('first_name')
+    last_name = request.data.get('last_name')
     username = request.data.get('username')
     email = request.data.get('email')
+    mobile = request.data.get('mobile')
     password = request.data.get('password')
+    confirm_password = request.data.get('confirm_password')
 
-    if not username or not password:
+    if not username or not password or not confirm_password:
         return Response(
-            {'error': 'Username and password are required.'},
+            {'error': 'Username, password, and confirm password are required.'},
             status=status.HTTP_400_BAD_REQUEST
         )
+    if password != confirm_password:
+        return Response({'error': 'Passwords do not match.'},
+                        status=status.HTTP_400_BAD_REQUEST)
 
     if User.objects.filter(username=username).exists():
         return Response(
@@ -29,17 +37,24 @@ def register_user(request):
         )
 
     user = User.objects.create(
+        first_name=first_name,
+        last_name=last_name,
         username=username,
         email=email,
         password=make_password(password)
     )
 
-    wallet = Wallet.objects.create(user=user, balance=0)
+    # Update wallet with mobile number
+    wallet = user.wallet  # created automatically by signal
+    wallet.mobile = mobile
+    wallet.save()
+
+    #wallet = Wallet.objects.create(user=user, balance=0)
 
     return Response({
         'message': 'User registered successfully!',
         'username': user.username,
-        'wallet_id': wallet.id
+        'wallet_id': user.wallet.id
     }, status=status.HTTP_201_CREATED)
 
 class WalletView(APIView):
