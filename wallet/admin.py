@@ -1,9 +1,34 @@
 from django.contrib import admin
 from django.db.models import Sum
 from django.utils.html import format_html
+from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth import get_user_model
 from .models import Wallet, Transaction
 from .dashboard_admin import CustomAdminSite
 
+# ✅ Get your CustomUser model
+User = get_user_model()
+
+# --- Custom User Admin Registration ---
+@admin.register(User)
+class CustomUserAdmin(UserAdmin):
+    list_display = ('username', 'email', 'first_name', 'last_name', 'mobile', 'is_staff', 'is_active')
+    search_fields = ('username', 'email', 'mobile')
+    ordering = ('username',)
+
+    fieldsets = (
+        (None, {'fields': ('username', 'password')}),
+        ('Personal info', {'fields': ('first_name', 'last_name', 'email', 'mobile')}),
+        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        ('Important dates', {'fields': ('last_login', 'date_joined')}),
+    )
+
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'email', 'mobile', 'password1', 'password2', 'is_staff', 'is_active'),
+        }),
+    )
 
 # --- Inline Transactions ---
 class TransactionInline(admin.TabularInline):
@@ -96,9 +121,9 @@ class TransactionAdmin(admin.ModelAdmin):
         return format_html(f'<b style="color:{color};">Ksh {obj.amount:,.2f}</b>')
     formatted_amount.short_description = 'Amount'
 
+
 # --- Register custom admin site ---
 custom_admin_site = CustomAdminSite(name='custom_admin')
-
-
 custom_admin_site.register(Wallet)
 custom_admin_site.register(Transaction)
+custom_admin_site.register(User, CustomUserAdmin)

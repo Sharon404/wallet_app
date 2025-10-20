@@ -71,6 +71,8 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'wallet_backend.urls'
 
+AUTH_USER_MODEL = 'wallet.CustomUser'
+
 CORS_ALLOW_ALL_ORIGINS = True  # for testing only
 
 TEMPLATES = [

@@ -2,7 +2,11 @@ from django.contrib import admin
 from django.template.response import TemplateResponse
 from django.db.models import Sum
 from .models import Wallet, Transaction
-from django.contrib.auth.models import User, Group
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+
+# ✅ Use the custom user model
+User = get_user_model()
 
 
 class CustomAdminSite(admin.AdminSite):
@@ -38,7 +42,7 @@ class CustomAdminSite(admin.AdminSite):
 # Instantiate your custom admin site
 dashboard_admin_site = CustomAdminSite(name='dashboard_admin')
 
-# Register models
+# ✅ Register models
 dashboard_admin_site.register(User)
 dashboard_admin_site.register(Group)
 dashboard_admin_site.register(Wallet)

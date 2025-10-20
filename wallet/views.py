@@ -2,14 +2,14 @@ from decimal import Decimal
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from .models import Wallet, Transaction
 from .serializers import WalletSerializer, TransactionSerializer
 from django.contrib.auth.hashers import make_password
 from rest_framework import status
 from rest_framework.decorators import api_view
 
-
+User = get_user_model()
 
 @api_view(['POST'])
 def register_user(request):
