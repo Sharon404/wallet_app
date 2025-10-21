@@ -40,6 +40,7 @@ def register_user(request):
         first_name=first_name,
         last_name=last_name,
         username=username,
+        mobile_number=mobile,
         email=email,
         password=make_password(password)
     )
