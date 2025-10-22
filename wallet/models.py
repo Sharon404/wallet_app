@@ -4,7 +4,7 @@ import uuid
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-# ✅ Custom User model
+#  Custom User model
 class CustomUser(AbstractUser):
     mobile = models.CharField(max_length=15, blank=True, null=True)
 
@@ -12,7 +12,7 @@ class CustomUser(AbstractUser):
         return self.username
 
 
-# ✅ Wallet model linked to CustomUser
+#  Wallet model linked to CustomUser
 class Wallet(models.Model):
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE)
     wallet_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
@@ -42,7 +42,7 @@ class Transaction(models.Model):
         return f"{self.transaction_type} - {self.amount}"
 
 
-# ✅ Automatically create wallet for each new user
+#  Automatically create wallet for each new user
 @receiver(post_save, sender=CustomUser)
 def create_user_wallet(sender, instance, created, **kwargs):
     if created:

@@ -32,7 +32,18 @@ class RegisterSerializer(serializers.ModelSerializer):
         user = User.objects.create_user(**validated_data)
         return user
 
+# --- Login Serializer ---
+class LoginSerializer(serializers.Serializer):
+    username_or_email = serializers.CharField()
+    password = serializers.CharField()
 
+
+# --- OTP Verification Serializer ---
+class VerifyOTPSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    otp = serializers.CharField(max_length=6)
+
+    
 # Wallet Serializer
 class WalletSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)

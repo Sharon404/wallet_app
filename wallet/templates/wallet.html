@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My Wallet</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8f9fa;
+      color: #333;
+      text-align: center;
+      padding: 40px;
+    }
+    .wallet-container {
+      background: white;
+      max-width: 500px;
+      margin: auto;
+      border-radius: 15px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      padding: 25px;
+    }
+    h1 {
+      color: #00695c;
+    }
+    .balance {
+      font-size: 2em;
+      color: #2e7d32;
+      margin: 20px 0;
+    }
+    button {
+      background: #00796b;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #004d40;
+    }
+    .transactions {
+      margin-top: 30px;
+      text-align: left;
+    }
+    .transaction {
+      background: #f1f8e9;
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wallet-container">
+    <h1>Welcome to Your Wallet</h1>
+    <p id="usernameDisplay"></p>
+    <div class="balance">Balance: Ksh <span id="balance">0.00</span></div>
+    
+    <button id="depositBtn">Deposit</button>
+    <button id="transferBtn">Transfer</button>
+    <button id="logoutBtn" style="background:#b71c1c;">Logout</button>
+
+    <div class="transactions">
+      <h3>Transaction History</h3>
+      <div id="transactionList">Loading...</div>
+    </div>
+  </div>
+
+  <script>
+    const userData = JSON.parse(localStorage.getItem('userData'));
+    const usernameDisplay = document.getElementById('usernameDisplay');
+    const balanceEl = document.getElementById('balance');
+    const transactionList = document.getElementById('transactionList');
+
+    // Redirect if not logged in
+    if (!userData) {
+      window.location.href = '/login.html';
+    } else {
+      usernameDisplay.textContent = `Hello, ${userData.username}`;
+      fetchWallet();
+    }
+
+    async function fetchWallet() {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/wallet/', {
+          headers: {
+            'Authorization': `Token ${userData.token || ''}` // if you later add tokens
+          }
+        });
+
+        const data = await response.json();
+        balanceEl.textContent = data.balance || '0.00';
+
+        // Load transactions (you can expand API later)
+        if (data.transactions && data.transactions.length > 0) {
+          transactionList.innerHTML = '';
+          data.transactions.forEach(tx => {
+            const div = document.createElement('div');
+            div.className = 'transaction';
+            div.innerHTML = `<strong>${tx.transaction_type}</strong>: Ksh ${tx.amount} <br> ${tx.description}`;
+            transactionList.appendChild(div);
+          });
+        } else {
+          transactionList.textContent = 'No transactions yet.';
+        }
+      } catch (error) {
+        console.error('Error loading wallet:', error);
+      }
+    }
+
+    document.getElementById('depositBtn').addEventListener('click', () => {
+      const amount = prompt("Enter amount to deposit:");
+      if (amount) handleTransaction('deposit', amount);
+    });
+
+    document.getElementById('transferBtn').addEventListener('click', () => {
+      const recipient = prompt("Enter recipient username:");
+      const amount = prompt("Enter amount to transfer:");
+      if (recipient && amount) handleTransaction('transfer', amount, recipient);
+    });
+
+    async function handleTransaction(type, amount, recipient = null) {
+      const url = `http://127.0.0.1:8000/api/${type}/`;
+      const body = { amount };
+      if (recipient) body.recipient = recipient;
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Token ${userData.token || ''}`
+          },
+          body: JSON.stringify(body)
+        });
+
+        const data = await response.json();
+        alert(data.message || data.error);
+        fetchWallet();
+      } catch (error) {
+        alert('Transaction failed.');
+      }
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('userData');
+      window.location.href = '/login.html';
+    });
+  </script>
+</body>
+</html>
