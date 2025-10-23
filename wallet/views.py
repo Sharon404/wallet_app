@@ -7,11 +7,10 @@ from django.contrib.auth import get_user_model, authenticate
 from django.utils.http import urlsafe_base64_decode
 from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
-from django.contrib.auth.hashers import make_password
-from django.contrib.auth import authenticate
-from rest_framework_simplejwt.tokens import RefreshToken
-
-from .models import Wallet, Transaction
+from django.conf import settings
+from datetime import timedelta
+from django.utils import timezone
+from .models import Wallet, Transaction, OTP
 from .serializers import (
     WalletSerializer,
     TransactionSerializer,
@@ -20,16 +19,17 @@ from .serializers import (
     VerifyOTPSerializer
 )
 from .utils import send_activation_email, send_otp
+import random
 
 User = get_user_model()
 
 
-# REGISTER USER — sends activation email
+# ---------------- REGISTER ----------------
 @api_view(['POST'])
 def register_user(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
-        user = serializer.save(is_active=False)  # user inactive until activation
+        user = serializer.save(is_active=False)  # inactive until activation
         send_activation_email(user, request)
         return Response({
             'message': 'Registration successful! Please check your email to activate your account.'
@@ -37,8 +37,7 @@ def register_user(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-# ACTIVATE ACCOUNT — via email link
+# ---------------- ACTIVATE ACCOUNT ----------------
 @api_view(['GET'])
 def activate_account(request, uidb64, token):
     try:
@@ -55,8 +54,7 @@ def activate_account(request, uidb64, token):
         return Response({'error': 'Activation link invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-# LOGIN — username or email, sends OTP
+# ---------------- LOGIN (SEND OTP) ----------------
 @api_view(['POST'])
 def login_user(request):
     serializer = LoginSerializer(data=request.data)
@@ -65,16 +63,29 @@ def login_user(request):
         password = serializer.validated_data['password']
 
         user = authenticate(request, username=username_or_email, password=password)
-        if user is not None:
-            send_otp(user)
-            return Response({'message': 'Login successful. OTP sent to your email.', 'user_id': user.id})
-        else:
-            return Response({'error': 'Invalid credentials or account not activated.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if user is None:
+            try:
+                user_obj = User.objects.get(email=username_or_email)
+                user = authenticate(request, username=user_obj.username, password=password)
+            except User.DoesNotExist:
+                return Response({'error': 'Invalid credentials.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not user:
+            return Response({'error': 'Invalid username/email or password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not user.is_active:
+            return Response({'error': 'Please activate your account first.'}, status=status.HTTP_403_FORBIDDEN)
+
+        send_otp(user)
+        return Response({
+            'message': 'Login successful. OTP sent to your email.',
+            'user_id': user.id
+        })
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-# VERIFY OTP — final step before landing page
+# ---------------- VERIFY OTP ----------------
 @api_view(['POST'])
 def verify_otp(request):
     serializer = VerifyOTPSerializer(data=request.data)
@@ -85,51 +96,13 @@ def verify_otp(request):
 
         if cached_otp == otp:
             cache.delete(f"otp_{user_id}")
-            return Response({'message': 'OTP verified successfully! Redirecting to landing page...'})
+            return Response({'message': 'OTP verified successfully!'})
         else:
             return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# LOGIN VIEW — username or email + password
-@api_view(['POST'])
-def login_user(request):
-    username_or_email = request.data.get('username_or_email')
-    password = request.data.get('password')
-
-    if not username_or_email or not password:
-        return Response({'error': 'Username/Email and password are required.'}, status=400)
-
-    # Try to authenticate with username or email
-    user = authenticate(username=username_or_email, password=password)
-
-    # If not found by username, try by email
-    if user is None:
-        try:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            user_obj = User.objects.get(email=username_or_email)
-            user = authenticate(username=user_obj.username, password=password)
-        except User.DoesNotExist:
-            return Response({'error': 'Invalid login credentials.'}, status=400)
-
-    # Check if user exists and is active
-    if user is None:
-        return Response({'error': 'Invalid username or password.'}, status=400)
-
-    if not user.is_active:
-        return Response({'error': 'Please activate your account via email first.'}, status=403)
-
-    # If all good, log them in
-    return Response({
-        'message': 'Login successful!',
-        'username': user.username,
-        'email': user.email,
-        'wallet_id': user.wallet.wallet_id
-    }, status=200)
-
-
-# WALLET VIEW — shows balance and details
+# ---------------- WALLET VIEW ----------------
 class WalletView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -139,7 +112,7 @@ class WalletView(APIView):
         return Response(serializer.data)
 
 
-# DEPOSIT VIEW — add funds to wallet
+# ---------------- DEPOSIT ----------------
 class DepositView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -169,8 +142,7 @@ class DepositView(APIView):
             return Response({'error': str(e)}, status=500)
 
 
-
-# TRANSFER VIEW
+# ---------------- TRANSFER ----------------
 class TransferView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

@@ -3,6 +3,8 @@ from django.contrib.auth.models import AbstractUser
 import uuid
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
+import random
 
 #  Custom User model
 class CustomUser(AbstractUser):
@@ -10,6 +12,19 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.username
+
+#  OTP model
+class OTP(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_verified = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"OTP for {self.user.username} - {self.code}"
+
+    def is_valid(self):
+        return timezone.now() < self.expires_at
 
 
 #  Wallet model linked to CustomUser

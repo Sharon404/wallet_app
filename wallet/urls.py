@@ -21,5 +21,4 @@ urlpatterns = [
     path('activate/<uidb64>/<token>/', activate_account, name='activate_account'),
     path('login/', login_user, name='login_user'),
     path('verify-otp/', verify_otp, name='verify_otp'),
-    path('login/', login_user, name='login_user'),
 ]
