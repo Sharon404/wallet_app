@@ -24,6 +24,7 @@ from django.shortcuts import redirect
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status
 from .models import CustomUser
+from rest_framework.permissions import IsAuthenticated
 
 
 
@@ -133,6 +134,17 @@ def verify_otp(request):
         }, status=status.HTTP_200_OK)
     else:
         return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+
+# ---------------- USER PROFILE ----------------
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_profile(request):
+    user = request.user
+    return Response({
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+    })
 
 # ---------------- WALLET VIEW ----------------
 class WalletView(APIView):

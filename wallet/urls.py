@@ -7,11 +7,13 @@ from .views import (
     activate_account,
     login_user,
     verify_otp,
-    login_user
+    login_user,
+    user_profile
 )
 
 urlpatterns = [
     # Wallet endpoints
+    path('api/user/profile/', user_profile, name='user-profile'),
     path('wallet/', WalletView.as_view(), name='wallet'),
     path('deposit/', DepositView.as_view(), name='deposit'),
     path('transfer/', TransferView.as_view(), name='transfer'),
