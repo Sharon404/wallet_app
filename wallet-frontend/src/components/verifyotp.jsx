@@ -1,6 +1,7 @@
 // pages/VerifyOtp.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "../api/axiosConfig";
 
 const VerifyOtp = () => {
   const [otp, setOtp] = useState("");
@@ -9,37 +10,41 @@ const VerifyOtp = () => {
   const navigate = useNavigate();
 
   const handleVerify = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage("");
+  e.preventDefault();
+  setLoading(true);
+  setMessage("");
 
-    const user_id = localStorage.getItem("user_id");
-    if (!user_id) {
-      setMessage("User ID not found. Please log in again.");
-      setLoading(false);
-      return;
+  const user_id = localStorage.getItem("user_id");
+  if (!user_id) {
+    setMessage("User ID not found. Please log in again.");
+    setLoading(false);
+    return;
+  }
+
+  try {
+    const response = await fetch("http://127.0.0.1:8000/api/verify-otp/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id, otp }),
+    });
+
+    const data = await response.json();
+    if (response.ok) {
+      // ✅ Save JWT token in localStorage
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("refresh", data.refresh);
+      setMessage("OTP verified successfully! Redirecting...");
+      setTimeout(() => navigate("/wallet"), 1500);
+    } else {
+      setMessage(data.error || "Invalid OTP.");
     }
+  } catch (error) {
+    setMessage("Error verifying OTP. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+};
 
-    try {
-      const response = await fetch("http://127.0.0.1:8000/api/verify-otp/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id, otp }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        setMessage("OTP verified successfully! Redirecting...");
-        setTimeout(() => navigate("/wallet"), 1500);
-      } else {
-        setMessage(data.error || "Invalid OTP.");
-      }
-    } catch (error) {
-      setMessage("Error verifying OTP. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-50">

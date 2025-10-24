@@ -20,6 +20,12 @@ from .serializers import (
 )
 from .utils import send_activation_email, send_otp
 import random
+from django.shortcuts import redirect 
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import status
+from .models import CustomUser
+
+
 
 User = get_user_model()
 
@@ -36,7 +42,6 @@ def register_user(request):
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 # ---------------- ACTIVATE ACCOUNT ----------------
 @api_view(['GET'])
 def activate_account(request, uidb64, token):
@@ -49,10 +54,10 @@ def activate_account(request, uidb64, token):
     if default_token_generator.check_token(user, token):
         user.is_active = True
         user.save()
-        return Response({'message': 'Account activated successfully! You can now log in.'})
+        # Redirect user to your frontend login page
+        return redirect("http://localhost:5173/login")  # change port if needed
     else:
         return Response({'error': 'Activation link invalid or expired.'}, status=status.HTTP_400_BAD_REQUEST)
-
 
 # ---------------- LOGIN (SEND OTP) ----------------
 @api_view(['POST'])
@@ -88,19 +93,46 @@ def login_user(request):
 # ---------------- VERIFY OTP ----------------
 @api_view(['POST'])
 def verify_otp(request):
-    serializer = VerifyOTPSerializer(data=request.data)
-    if serializer.is_valid():
-        user_id = serializer.validated_data['user_id']
-        otp = serializer.validated_data['otp']
-        cached_otp = cache.get(f"otp_{user_id}")
+    user_id = request.data.get('user_id')
+    code = request.data.get('otp')
 
-        if cached_otp == otp:
-            cache.delete(f"otp_{user_id}")
-            return Response({'message': 'OTP verified successfully!'})
-        else:
-            return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    if not user_id or not code:
+        return Response({'error': 'Missing user_id or otp.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    try:
+        user = CustomUser.objects.get(id=user_id)
+    except CustomUser.DoesNotExist:
+        return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Debug: print all OTPs for that user
+    print("🔍 All OTPs for this user:")
+    for o in OTP.objects.filter(user=user):
+        print(o.code, o.created_at, o.is_verified)
+
+    # Optional: expire OTPs older than 5 mins
+    expiry_time = timezone.now() - timedelta(minutes=5)
+    otp = OTP.objects.filter(user=user, is_verified=False, created_at__gte=expiry_time).order_by('-created_at').first()
+
+    if not otp:
+        return Response({'error': 'OTP not found or expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    print("Expected OTP:", otp.code)
+    print("Received OTP:", code)
+
+    if str(otp.code).strip() == str(code).strip():
+        otp.is_verified = True
+        otp.save()
+
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+
+        return Response({
+            'message': 'OTP verified successfully!',
+            'token': access_token,
+            'refresh': str(refresh)
+        }, status=status.HTTP_200_OK)
+    else:
+        return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
 # ---------------- WALLET VIEW ----------------
 class WalletView(APIView):

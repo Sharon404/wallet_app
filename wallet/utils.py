@@ -5,6 +5,9 @@ from django.utils.encoding import force_bytes
 from django.conf import settings
 import random
 from django.core.cache import cache
+from .models import OTP
+from django.utils import timezone
+
 
 # --- Activation Email ---
 def send_activation_email(user, request):
@@ -25,9 +28,29 @@ def send_activation_email(user, request):
 
 # --- OTP ---
 def send_otp(user):
-    otp = str(random.randint(100000, 999999))
-    cache.set(f"otp_{user.id}", otp, timeout=300)  # expires in 5 min
+    otp_code = str(random.randint(100000, 999999))
 
-    subject = "Your Verification Code"
-    message = f"Your OTP code is: {otp}"
-    send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email])
+    # delete old OTPs
+    OTP.objects.filter(user=user, is_verified=False).delete()
+
+    # create new OTP record
+    otp = OTP.objects.create(
+        user=user,
+        code=otp_code,
+        created_at=timezone.now(),
+        is_verified=False
+    )
+
+    print(f"Your OTP code is: {otp_code}")
+    print("----------------------------------------------------")
+
+    # optional: send via email
+    send_mail(
+        "Your Verification Code",
+        f"Your OTP code is: {otp_code}",
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=True,
+    )
+
+    return otp
