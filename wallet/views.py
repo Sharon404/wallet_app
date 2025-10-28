@@ -25,6 +25,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status
 from .models import CustomUser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 
 
 
@@ -33,6 +34,7 @@ User = get_user_model()
 
 # ---------------- REGISTER ----------------
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def register_user(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
@@ -45,6 +47,7 @@ def register_user(request):
 
 # ---------------- ACTIVATE ACCOUNT ----------------
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
     try:
         uid = urlsafe_base64_decode(uidb64).decode()
@@ -62,6 +65,7 @@ def activate_account(request, uidb64, token):
 
 # ---------------- LOGIN (SEND OTP) ----------------
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def login_user(request):
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
@@ -93,6 +97,7 @@ def login_user(request):
 
 # ---------------- VERIFY OTP ----------------
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def verify_otp(request):
     user_id = request.data.get('user_id')
     code = request.data.get('otp')

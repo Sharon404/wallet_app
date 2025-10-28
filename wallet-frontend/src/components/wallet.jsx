@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
-import axios from "../api/axiosConfig"; // Ensure axios is correctly configured
-import { useNavigate } from "react-router-dom"; // if using React Router
+import axios from "../api/axiosConfig";
+import { useNavigate } from "react-router-dom";
+
+axios.defaults.baseURL = "http://127.0.0.1:8000/api";
 
 const WalletHome = () => {
   const navigate = useNavigate();
@@ -9,7 +11,6 @@ const WalletHome = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch user details (assuming token saved in localStorage)
     const token = localStorage.getItem("token");
     if (!token) {
       navigate("/login");
@@ -17,14 +18,12 @@ const WalletHome = () => {
     }
 
     axios
-      .get("/api/user/profile/", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      .get("/user/profile/", {
+        headers: { Authorization: `Bearer ${token}` },
       })
       .then((res) => {
         setUser(res.data);
-        setBalance(res.data.balance || 0.0); // mock data
+        setBalance(parseFloat(res.data.balance) || 0.0);
         setLoading(false);
       })
       .catch(() => {
@@ -32,6 +31,65 @@ const WalletHome = () => {
         navigate("/login");
       });
   }, [navigate]);
+
+  // ✅ Move all handlers inside the component
+
+  const handleDeposit = async () => {
+    const amount = prompt("Enter deposit amount (KES):");
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return alert("Please enter a valid amount.");
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        "/deposit/",
+        { amount },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (res.data.message === "Deposit successful") {
+        alert("Deposit successful ✅");
+        setBalance(Number(res.data.new_balance));
+      } else {
+        alert("Deposit failed ❌");
+      }
+    } catch (err) {
+      console.error("Deposit error:", err);
+      alert(err.response?.data?.error || "Deposit failed ❌");
+    }
+  };
+
+  const handleWithdraw = () => {
+    alert("Withdraw feature coming soon!");
+  };
+
+  const handleTransfer = async () => {
+    const recipient = prompt("Enter recipient username:");
+    const amount = prompt("Enter amount to send (KES):");
+    if (!recipient || !amount || isNaN(amount) || amount <= 0) {
+      return alert("Please provide valid details.");
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        "/transfer/",
+        { recipient, amount },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      alert(res.data.message);
+      setBalance(parseFloat(res.data.sender_balance));
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.error || "Transfer failed.");
+    }
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -52,71 +110,12 @@ const WalletHome = () => {
         <button style={styles.button} onClick={handleDeposit}>Deposit</button>
         <button style={styles.button} onClick={handleWithdraw}>Withdraw</button>
         <button style={styles.button} onClick={handleTransfer}>Send Money</button>
-       
       </div>
 
       <button onClick={handleLogout} style={styles.logout}>Logout</button>
     </div>
   );
 };
-
-// Deposit Handler
-const handleDeposit = async () => {
-  const amount = prompt("Enter deposit amount (KES):");
-  if (!amount || isNaN(amount) || amount <= 0) {
-    return alert("Please enter a valid amount.");
-  }
-
-  try {
-    const token = localStorage.getItem("token");
-    const res = await axios.post(
-      "/api/deposit/",
-      { amount },
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    alert(res.data.message);
-    setBalance(parseFloat(res.data.new_balance));
-  } catch (err) {
-    console.error(err);
-    alert(err.response?.data?.error || "Deposit failed.");
-  }
-};
-
-// Withdraw Handler
-const handleWithdraw = () => {
-  alert("Withdraw feature coming soon!");
-};
-
-// Transfer Handler
-const handleTransfer = async () => {
-  const recipient = prompt("Enter recipient username:");
-  const amount = prompt("Enter amount to send (KES):");
-  if (!recipient || !amount || isNaN(amount) || amount <= 0) {
-    return alert("Please provide valid details.");
-  }
-
-  try {
-    const token = localStorage.getItem("token");
-    const res = await axios.post(
-      "/api/transfer/",
-      { recipient, amount },
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    alert(res.data.message);
-    setBalance(parseFloat(res.data.sender_balance));
-  } catch (err) {
-    console.error(err);
-    alert(err.response?.data?.error || "Transfer failed.");
-  }
-};
-
-
 
 const styles = {
   container: {
