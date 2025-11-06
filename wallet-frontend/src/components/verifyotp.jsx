@@ -10,48 +10,51 @@ const VerifyOtp = () => {
   const navigate = useNavigate();
 
   const handleVerify = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  setMessage("");
+    e.preventDefault();
+    setLoading(true);
+    setMessage("");
 
-  const user_id = localStorage.getItem("user_id");
-  if (!user_id) {
-    setMessage("User ID not found. Please log in again.");
-    setLoading(false);
-    return;
-  }
-
-  try {
-    const response = await fetch("http://127.0.0.1:8000/api/verify-otp/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id, otp }),
-    });
-
-    const data = await response.json();
-    if (response.ok) {
-      // ✅ Save JWT token in localStorage
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("refresh", data.refresh);
-      setMessage("OTP verified successfully! Redirecting...");
-      setTimeout(() => navigate("/wallet"), 1500);
-    } else {
-      setMessage(data.error || "Invalid OTP.");
+    const user_id = localStorage.getItem("user_id");
+    if (!user_id) {
+      setMessage("User ID not found. Please log in again.");
+      setLoading(false);
+      return;
     }
-  } catch (error) {
-    setMessage("Error verifying OTP. Please try again.");
-  } finally {
-    setLoading(false);
-  }
-};
 
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/verify-otp/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id, otp }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // ✅ Save access and refresh tokens
+        localStorage.setItem("access_token", data.token);
+        localStorage.setItem("refresh_token", data.refresh);
+
+        setMessage("✅ OTP verified successfully! Redirecting...");
+        setTimeout(() => navigate("/wallet"), 1500);
+      } else {
+        setMessage(data.error || "❌ Invalid OTP. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error verifying OTP:", error);
+      setMessage("⚠️ Server error. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-50">
       <div className="bg-white shadow-lg p-8 rounded-2xl w-full max-w-md">
-        <h2 className="text-2xl font-semibold text-center mb-6">
+        <h2 className="text-2xl font-semibold text-center mb-6 text-green-700">
           Verify OTP
         </h2>
+
         <form onSubmit={handleVerify}>
           <label className="block mb-2 text-gray-600">Enter OTP</label>
           <input
@@ -65,7 +68,7 @@ const VerifyOtp = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700"
+            className="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700 transition-all"
           >
             {loading ? "Verifying..." : "Verify OTP"}
           </button>

@@ -140,15 +140,32 @@ def verify_otp(request):
     else:
         return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
 
+
 # ---------------- USER PROFILE ----------------
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_profile(request):
     user = request.user
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    
+    # Get user's transactions
+    transactions = Transaction.objects.filter(wallet=wallet).order_by('-timestamp')
+    transaction_data = [
+        {
+            'transaction_type': t.transaction_type,
+            'amount': str(t.amount),
+            'description': t.description,
+            'timestamp': t.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for t in transactions
+    ]
+
     return Response({
         'id': user.id,
         'username': user.username,
         'email': user.email,
+        'wallet_balance': str(wallet.balance),
+        'transactions': transaction_data,
     })
 
 # ---------------- WALLET VIEW ----------------
