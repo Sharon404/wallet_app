@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect} from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import Register from "./components/Register";
 import Login from "./components/login";
@@ -6,6 +6,48 @@ import VerifyOtp from "./components/verifyotp";
 import Wallet from "./components/wallet";
 
 function App() {
+  useEffect(() => {
+    // Clear tokens on logout (tab close, visibility change)
+    const handleLogout = () => {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+    };
+
+    // Inactivity logout after 30 minutes
+    let timeout;
+    const resetTimer = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+        window.location.href = "/login"; // force logout + redirect
+      }, 30 * 60 * 1000); // 30 minutes
+    };
+
+    // Attach events
+    window.addEventListener("mousemove", resetTimer);
+    window.addEventListener("keypress", resetTimer);
+    window.addEventListener("beforeunload", handleLogout);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) handleLogout();
+    });
+
+    // Start timer
+    resetTimer();
+
+    // Cleanup
+    return () => {
+      window.removeEventListener("mousemove", resetTimer);
+      window.removeEventListener("keypress", resetTimer);
+      window.removeEventListener("beforeunload", handleLogout);
+      document.removeEventListener("visibilitychange", () => {
+        if (document.hidden) handleLogout();
+      });
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  // Main App component with routing
   return (
     <Router>
       <div style={{ textAlign: "center", marginTop: "20px" }}>
@@ -30,5 +72,7 @@ function App() {
     </Router>
   );
 }
+
+
 
 export default App;

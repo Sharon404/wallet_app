@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qsl
+from datetime import timedelta
 
 load_dotenv()
 
@@ -31,6 +32,15 @@ SECRET_KEY = 'django-insecure-0!3h&zk1+z0$q^$^xz0%#mdw6p^+*==x7)k*@!szvt5=%15e6o
 DEBUG = True
 
 ALLOWED_HOSTS = []
+
+# SIMPLE JWT CONFIGURATION
+IMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),  # expires after 30 mins
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),     # optional if you allow refresh
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
 
 
 # Application definition
