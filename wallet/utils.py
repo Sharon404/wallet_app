@@ -4,6 +4,8 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.conf import settings
 import random
+import requests
+from decimal import Decimal, ROUND_HALF_UP
 from django.core.cache import cache
 from .models import OTP
 from django.utils import timezone
@@ -54,3 +56,29 @@ def send_otp(user):
     )
 
     return otp
+
+# --- Currency Conversion ---
+EXCHANGE_API = "https://api.exchangerate.host/convert"
+
+def convert_currency(amount: Decimal, from_currency: str, to_currency: str):
+    """
+    Returns (converted_amount: Decimal, rate: Decimal)
+    Caches the exchange rate for 5 minutes.
+    """
+    if from_currency == to_currency:
+        return (amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                Decimal('1.0'))
+
+    cache_key = f"rate_{from_currency}_{to_currency}"
+    rate = cache.get(cache_key)
+    if rate is None:
+        params = {"from": from_currency, "to": to_currency, "amount": 1}
+        resp = requests.get(EXCHANGE_API, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        rate = Decimal(str(data['result']))  # result is amount for 1 unit; API returns float
+        cache.set(cache_key, rate, 300)  # cache 5 minutes
+
+    # Compute converted amount (use quantize)
+    converted = (amount * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return converted, rate

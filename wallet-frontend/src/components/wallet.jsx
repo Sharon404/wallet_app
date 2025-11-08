@@ -10,6 +10,12 @@ const WalletHome = () => {
   const [balance, setBalance] = useState(0.0);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [receiverEmail, setReceiverEmail] = useState("");
+  const [currencyTo, setCurrencyTo] = useState("GBP");
+  const [preview, setPreview] = useState(null);
+  const [withdrawMessage, setWithdrawMessage] = useState("");
+
 
   // Fetch user + wallet + transactions
   useEffect(() => {
@@ -31,13 +37,16 @@ const WalletHome = () => {
       })
       .catch((err) => {
         console.error("Profile fetch error:", err);
-        localStorage.removeItem("token");
+        // Clear our actual token keys and redirect to login
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
         navigate("/login");
       });
   }, [navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
     navigate("/login");
   };
 
@@ -49,7 +58,7 @@ const WalletHome = () => {
     }
 
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("access_token");
       const res = await axios.post(
         "/deposit/",
         { amount },
@@ -72,7 +81,7 @@ const WalletHome = () => {
   // Reusable function to refresh transactions
   const fetchTransactions = async () => {
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("access_token");
       const res = await axios.get("/user/profile/", {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -82,10 +91,43 @@ const WalletHome = () => {
     }
   };
 
-  const handleWithdraw = () => {
-    alert("Withdraw feature coming soon!");
-  };
+  // ----- Withdraw and Convert Handler -----
+  const handlePreviewConversion = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+    const res = await axios.post(
+      "/convert-preview/",
+      { amount: withdrawAmount, currency_to: currencyTo, receiver_email: receiverEmail },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    setPreview(res.data); // { converted_amount, rate }
+  } catch (err) {
+    setWithdrawMessage(err.response?.data?.error || "Preview failed");
+  }
+};
 
+
+const handleWithdraw = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+    const res = await axios.post(
+      "/withdraw/",
+      { amount: withdrawAmount, currency_to: currencyTo, receiver_email: receiverEmail },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    setWithdrawMessage(
+      `Success! Sent KES ${withdrawAmount}. Recipient got ${res.data.converted_amount} ${currencyTo}`
+    );
+    setPreview(null);
+    setWithdrawAmount("");
+    setReceiverEmail("");
+  } catch (err) {
+    setWithdrawMessage(err.response?.data?.error || "Withdrawal failed");
+  }
+};
+
+
+  // ----- Transfer Handler -----
   const handleTransfer = async () => {
     const recipient = prompt("Enter recipient username:");
     const amount = prompt("Enter amount to send (KES):");
@@ -94,7 +136,7 @@ const WalletHome = () => {
     }
 
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("access_token");
       const res = await axios.post(
         "/transfer/",
         { recipient, amount },
@@ -125,9 +167,47 @@ const WalletHome = () => {
         <button style={styles.button} onClick={handleDeposit}>
           Deposit
         </button>
-        <button style={styles.button} onClick={handleWithdraw}>
-          Withdraw
-        </button>
+        <section className="withdraw-section">
+  <h3>Withdraw Funds</h3>
+
+  <input
+    type="email"
+    placeholder="Receiver Email"
+    value={receiverEmail}
+    onChange={(e) => setReceiverEmail(e.target.value)}
+  />
+
+  <input
+    type="number"
+    placeholder="Amount (KES)"
+    value={withdrawAmount}
+    onChange={(e) => setWithdrawAmount(e.target.value)}
+  />
+
+  <select
+    value={currencyTo}
+    onChange={(e) => setCurrencyTo(e.target.value)}
+  >
+    <option value="GBP">GBP</option>
+    <option value="USD">USD</option>
+    <option value="KES">KES</option>
+  </select>
+
+  <button onClick={handlePreviewConversion}>Preview Conversion</button>
+
+  {preview && (
+    <div>
+      <p>Rate: {preview.rate}</p>
+      <p>
+        Recipient will receive: {preview.converted_amount} {currencyTo}
+      </p>
+      <button onClick={handleWithdraw}>Confirm and Send</button>
+    </div>
+  )}
+
+  {withdrawMessage && <p>{withdrawMessage}</p>}
+</section>
+
         <button style={styles.button} onClick={handleTransfer}>
           Send Money
         </button>

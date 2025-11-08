@@ -57,4 +57,10 @@ class WalletSerializer(serializers.ModelSerializer):
 class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
-        fields = ['transaction_id', 'transaction_type', 'amount', 'timestamp', 'description']
+        fields = '__all__'
+
+class WithdrawSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    currency_to = serializers.ChoiceField(choices=[c[0] for c in Wallet._meta.get_field('currency').choices])
+    receiver_email = serializers.EmailField()
+    # optional: description, swift/bank details etc.
