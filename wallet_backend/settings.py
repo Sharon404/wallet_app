@@ -34,7 +34,7 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 # SIMPLE JWT CONFIGURATION
-IMPLE_JWT = {
+SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),  # expires after 30 mins
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),     # optional if you allow refresh
     "ROTATE_REFRESH_TOKENS": False,
@@ -42,6 +42,9 @@ IMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+# Exchange Rate API Key - support both EXCHANGE_API_KEY and legacy EXCHANGE_RATE_API_KEY
+# Put your key in .env as EXCHANGE_API_KEY
+EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY") or os.getenv("EXCHANGE_RATE_API_KEY", "")
 
 # Application definition
 

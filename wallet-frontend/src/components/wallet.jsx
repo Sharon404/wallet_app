@@ -15,6 +15,11 @@ const WalletHome = () => {
   const [currencyTo, setCurrencyTo] = useState("GBP");
   const [preview, setPreview] = useState(null);
   const [withdrawMessage, setWithdrawMessage] = useState("");
+  const [showTransferForm, setShowTransferForm] = useState(false);
+  const [transferRecipient, setTransferRecipient] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferPreview, setTransferPreview] = useState(null);
+  const [transferProcessing, setTransferProcessing] = useState(false);
 
 
   // Fetch user + wallet + transactions
@@ -50,6 +55,68 @@ const WalletHome = () => {
     navigate("/login");
   };
 
+  // ----- Deposit Handler -----
+  // ----- Transfer Handler (inline form, single Send button) -----
+  const handleSendClick = async () => {
+    if (transferProcessing) return;
+
+    if (!transferRecipient || !transferAmount || isNaN(transferAmount) || transferAmount <= 0) {
+      return alert("Please provide a valid recipient and amount.");
+    }
+
+    const token = localStorage.getItem("access_token");
+
+    try {
+      setTransferProcessing(true);
+
+      // If we don't already have a preview for these values, request one
+      if (!transferPreview || transferPreview.amount !== String(transferAmount) || transferPreview.currency !== currencyTo) {
+        const previewRes = await axios.post(
+          "/convert-preview/",
+          { amount: transferAmount, currency_to: currencyTo },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        setTransferPreview({
+          amount: String(transferAmount),
+          converted_amount: previewRes.data.converted_amount,
+          rate: previewRes.data.rate,
+          currency: currencyTo,
+        });
+      }
+
+      // Confirm with the user using the preview
+      const confirmed = window.confirm(
+        `Recipient will receive ${transferPreview?.converted_amount || '...'} ${currencyTo} (rate: ${transferPreview?.rate || '...'}).\nProceed to send?`
+      );
+
+      if (!confirmed) {
+        setTransferProcessing(false);
+        return;
+      }
+
+      // Submit transfer to backend (transfer/ maps to TransactionFlowView)
+      const res = await axios.post(
+        "/transfer/",
+        { recipient: transferRecipient, amount: transferAmount, currency_to: currencyTo },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      alert(res.data.message || "Transfer successful");
+      setBalance(parseFloat(res.data.sender_balance) || balance);
+      // reset form
+      setTransferRecipient("");
+      setTransferAmount("");
+      setTransferPreview(null);
+      setShowTransferForm(false);
+      fetchTransactions();
+    } catch (err) {
+      console.error("Transfer error:", err);
+      alert(err.response?.data?.error || "Transfer failed.");
+    } finally {
+      setTransferProcessing(false);
+    }
+  };
   // ----- Deposit Handler -----
   const handleDeposit = async () => {
     const amount = prompt("Enter deposit amount (KES):");
@@ -97,7 +164,7 @@ const WalletHome = () => {
     const token = localStorage.getItem("access_token");
     const res = await axios.post(
       "/convert-preview/",
-      { amount: withdrawAmount, currency_to: currencyTo, receiver_email: receiverEmail },
+      { amount: withdrawAmount, currency_to: currencyTo },
       { headers: { Authorization: `Bearer ${token}` } }
     );
     setPreview(res.data); // { converted_amount, rate }
@@ -107,6 +174,7 @@ const WalletHome = () => {
 };
 
 
+// Withdraw handler
 const handleWithdraw = async () => {
   try {
     const token = localStorage.getItem("access_token");
@@ -127,30 +195,8 @@ const handleWithdraw = async () => {
 };
 
 
-  // ----- Transfer Handler -----
-  const handleTransfer = async () => {
-    const recipient = prompt("Enter recipient username:");
-    const amount = prompt("Enter amount to send (KES):");
-    if (!recipient || !amount || isNaN(amount) || amount <= 0) {
-      return alert("Please provide valid details.");
-    }
+  // (old prompt-based transfer removed - inline form used instead)
 
-    try {
-      const token = localStorage.getItem("access_token");
-      const res = await axios.post(
-        "/transfer/",
-        { recipient, amount },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      alert(res.data.message);
-      setBalance(parseFloat(res.data.sender_balance));
-      fetchTransactions(); // Refresh after transfer
-    } catch (err) {
-      console.error(err);
-      alert(err.response?.data?.error || "Transfer failed.");
-    }
-  };
 
   if (loading) return <p style={{ textAlign: "center" }}>Loading your wallet...</p>;
 
@@ -208,9 +254,61 @@ const handleWithdraw = async () => {
   {withdrawMessage && <p>{withdrawMessage}</p>}
 </section>
 
-        <button style={styles.button} onClick={handleTransfer}>
-          Send Money
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {!showTransferForm ? (
+            <button style={styles.button} onClick={() => setShowTransferForm(true)}>
+              Send Money
+            </button>
+          ) : (
+            <div style={{ backgroundColor: '#fff', padding: '12px', borderRadius: 8 }}>
+              <h4>Send Money</h4>
+              <input
+                type="text"
+                placeholder="Recipient username or email"
+                value={transferRecipient}
+                onChange={(e) => setTransferRecipient(e.target.value)}
+                style={{ width: '100%', padding: '8px', marginBottom: '8px' }}
+              />
+
+              <input
+                type="number"
+                placeholder={`Amount (${user?.wallet_balance ? 'your currency' : ''})`}
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                style={{ width: '100%', padding: '8px', marginBottom: '8px' }}
+              />
+
+              <select value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)} style={{ marginBottom: 8 }}>
+                <option value="GBP">GBP</option>
+                <option value="USD">USD</option>
+                <option value="KES">KES</option>
+              </select>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button style={styles.button} onClick={handleSendClick} disabled={transferProcessing}>
+                  {transferProcessing ? 'Sending...' : 'Send'}
+                </button>
+                <button
+                  style={{ padding: 8 }}
+                  onClick={() => {
+                    setShowTransferForm(false);
+                    setTransferPreview(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {transferPreview && (
+                <div style={{ marginTop: 8 }}>
+                  <small>
+                    Preview: recipient will receive {transferPreview.converted_amount} {transferPreview.currency} (rate: {transferPreview.rate})
+                  </small>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Transaction History */}
