@@ -10,17 +10,22 @@ const WalletHome = () => {
   const [balance, setBalance] = useState(0.0);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Shared currency selection (Option A)
+  const [currencyTo, setCurrencyTo] = useState("GBP");
+
+  // Withdraw flow state
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [receiverEmail, setReceiverEmail] = useState("");
-  const [currencyTo, setCurrencyTo] = useState("GBP");
-  const [preview, setPreview] = useState(null);
+  const [preview, setPreview] = useState(null); // preview used for Withdraw UI
   const [withdrawMessage, setWithdrawMessage] = useState("");
+
+  // Transfer (send money) flow state
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [transferRecipient, setTransferRecipient] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
-  const [transferPreview, setTransferPreview] = useState(null);
+  const [transferPreview, setTransferPreview] = useState(null); // preview state for UI only
   const [transferProcessing, setTransferProcessing] = useState(false);
-
 
   // Fetch user + wallet + transactions
   useEffect(() => {
@@ -42,7 +47,7 @@ const WalletHome = () => {
       })
       .catch((err) => {
         console.error("Profile fetch error:", err);
-        // Clear our actual token keys and redirect to login
+        // Clear tokens and redirect to login
         localStorage.removeItem("access_token");
         localStorage.removeItem("refresh_token");
         navigate("/login");
@@ -55,68 +60,6 @@ const WalletHome = () => {
     navigate("/login");
   };
 
-  // ----- Deposit Handler -----
-  // ----- Transfer Handler (inline form, single Send button) -----
-  const handleSendClick = async () => {
-    if (transferProcessing) return;
-
-    if (!transferRecipient || !transferAmount || isNaN(transferAmount) || transferAmount <= 0) {
-      return alert("Please provide a valid recipient and amount.");
-    }
-
-    const token = localStorage.getItem("access_token");
-
-    try {
-      setTransferProcessing(true);
-
-      // If we don't already have a preview for these values, request one
-      if (!transferPreview || transferPreview.amount !== String(transferAmount) || transferPreview.currency !== currencyTo) {
-        const previewRes = await axios.post(
-          "/convert-preview/",
-          { amount: transferAmount, currency_to: currencyTo },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-
-        setTransferPreview({
-          amount: String(transferAmount),
-          converted_amount: previewRes.data.converted_amount,
-          rate: previewRes.data.rate,
-          currency: currencyTo,
-        });
-      }
-
-      // Confirm with the user using the preview
-      const confirmed = window.confirm(
-        `Recipient will receive ${transferPreview?.converted_amount || '...'} ${currencyTo} (rate: ${transferPreview?.rate || '...'}).\nProceed to send?`
-      );
-
-      if (!confirmed) {
-        setTransferProcessing(false);
-        return;
-      }
-
-      // Submit transfer to backend (transfer/ maps to TransactionFlowView)
-      const res = await axios.post(
-        "/transfer/",
-        { recipient: transferRecipient, amount: transferAmount, currency_to: currencyTo },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      alert(res.data.message || "Transfer successful");
-      setBalance(parseFloat(res.data.sender_balance) || balance);
-      // reset form
-      setTransferRecipient("");
-      setTransferAmount("");
-      setTransferPreview(null);
-      setShowTransferForm(false);
-      fetchTransactions();
-    } catch (err) {
-      console.error("Transfer error:", err);
-      alert(err.response?.data?.error || "Transfer failed.");
-    } finally {
-      setTransferProcessing(false);
-    }
-  };
   // ----- Deposit Handler -----
   const handleDeposit = async () => {
     const amount = prompt("Enter deposit amount (KES):");
@@ -134,7 +77,7 @@ const WalletHome = () => {
 
       if (res.data.message === "Deposit successful") {
         alert("Deposit successful ✅");
-        setBalance(parseFloat(res.data.new_balance));
+        setBalance(parseFloat(res.data.new_balance) || balance);
         fetchTransactions(); // Refresh transactions after deposit
       } else {
         alert("Deposit failed ❌");
@@ -145,7 +88,7 @@ const WalletHome = () => {
     }
   };
 
-  // Reusable function to refresh transactions
+  // Reusable function to refresh transactions (and wallet)
   const fetchTransactions = async () => {
     try {
       const token = localStorage.getItem("access_token");
@@ -153,50 +96,140 @@ const WalletHome = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       setTransactions(res.data.transactions || []);
+      setBalance(parseFloat(res.data.wallet_balance) || balance);
     } catch (err) {
       console.error("Transaction refresh error:", err);
     }
   };
 
-  // ----- Withdraw and Convert Handler -----
-  const handlePreviewConversion = async () => {
-  try {
+  // ----- Convert Preview (shared) -----
+  // Used by both Withdraw and Send Money previews (Option A)
+  const fetchConvertPreview = async (amount) => {
     const token = localStorage.getItem("access_token");
+    if (!token) throw new Error("Not authenticated");
+
     const res = await axios.post(
       "/convert-preview/",
-      { amount: withdrawAmount, currency_to: currencyTo },
+      { amount, currency_to: currencyTo },
       { headers: { Authorization: `Bearer ${token}` } }
     );
-    setPreview(res.data); // { converted_amount, rate }
-  } catch (err) {
-    setWithdrawMessage(err.response?.data?.error || "Preview failed");
-  }
-};
+    // Expected res.data: { converted_amount, rate, currency_from, currency_to }
+    return res.data;
+  };
 
+  // ----- Withdraw (preview) -----
+  const handlePreviewConversion = async () => {
+    if (!withdrawAmount || isNaN(withdrawAmount) || Number(withdrawAmount) <= 0) {
+      return setWithdrawMessage("Please enter a valid withdraw amount.");
+    }
 
-// Withdraw handler
-const handleWithdraw = async () => {
-  try {
+    try {
+      const data = await fetchConvertPreview(withdrawAmount);
+      setPreview(data); // show in UI
+      setWithdrawMessage("");
+    } catch (err) {
+      console.error("Preview error:", err);
+      setWithdrawMessage(err.response?.data?.error || "Preview failed");
+    }
+  };
+
+  // Withdraw handler (Confirm and send to external email)
+  const handleWithdraw = async () => {
+    if (!withdrawAmount || isNaN(withdrawAmount) || Number(withdrawAmount) <= 0) {
+      return setWithdrawMessage("Please enter a valid withdraw amount.");
+    }
+    if (!receiverEmail) return setWithdrawMessage("Please enter receiver email.");
+
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await axios.post(
+        "/withdraw/",
+        { amount: withdrawAmount, currency_to: currencyTo, receiver_email: receiverEmail },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setWithdrawMessage(
+        `Success! Sent KES ${withdrawAmount}. Recipient got ${res.data.converted_amount} ${currencyTo}`
+      );
+      setPreview(null);
+      setWithdrawAmount("");
+      setReceiverEmail("");
+      setBalance(parseFloat(res.data.new_balance) || balance);
+      fetchTransactions();
+    } catch (err) {
+      console.error("Withdraw error:", err);
+      setWithdrawMessage(err.response?.data?.error || "Withdrawal failed");
+    }
+  };
+
+  // ----- Send Money (Transfer) Handler -----
+  // Main fix: always fetch fresh preview, use preview response directly for confirmation
+  const handleSendClick = async () => {
+    if (transferProcessing) return;
+
+    if (!transferRecipient || !transferAmount || isNaN(transferAmount) || Number(transferAmount) <= 0) {
+      return alert("Please provide a valid recipient and amount.");
+    }
+
     const token = localStorage.getItem("access_token");
-    const res = await axios.post(
-      "/withdraw/",
-      { amount: withdrawAmount, currency_to: currencyTo, receiver_email: receiverEmail },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    setWithdrawMessage(
-      `Success! Sent KES ${withdrawAmount}. Recipient got ${res.data.converted_amount} ${currencyTo}`
-    );
-    setPreview(null);
-    setWithdrawAmount("");
-    setReceiverEmail("");
-  } catch (err) {
-    setWithdrawMessage(err.response?.data?.error || "Withdrawal failed");
-  }
-};
+    if (!token) {
+      alert("Not authenticated");
+      return;
+    }
 
+    try {
+      setTransferProcessing(true);
 
-  // (old prompt-based transfer removed - inline form used instead)
+      // Always fetch a fresh preview from backend (don't rely on previous state)
+      const previewRes = await axios.post(
+        "/convert-preview/",
+        { amount: transferAmount, currency_to: currencyTo },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
+      const previewData = {
+        amount: String(transferAmount),
+        converted_amount: previewRes.data.converted_amount,
+        rate: previewRes.data.rate,
+        currency: currencyTo,
+      };
+
+      // Update UI preview state (for display if the form stays open)
+      setTransferPreview(previewData);
+
+      // IMPORTANT: use previewData directly for confirmation (not transferPreview state)
+      const confirmed = window.confirm(
+        `Recipient will receive ${previewData.converted_amount} ${currencyTo} (rate: ${previewData.rate}).\nProceed to send?`
+      );
+
+      if (!confirmed) {
+        setTransferProcessing(false);
+        return;
+      }
+
+      // Submit transfer to backend
+      const res = await axios.post(
+        "/transfer/",
+        { recipient: transferRecipient, amount: transferAmount, currency_to: currencyTo },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      alert(res.data.message || "Transfer successful");
+      setBalance(parseFloat(res.data.sender_balance) || balance);
+
+      // reset form
+      setTransferRecipient("");
+      setTransferAmount("");
+      setTransferPreview(null);
+      setShowTransferForm(false);
+      fetchTransactions();
+    } catch (err) {
+      console.error("Transfer error:", err);
+      alert(err.response?.data?.error || "Transfer failed.");
+    } finally {
+      setTransferProcessing(false);
+    }
+  };
 
   if (loading) return <p style={{ textAlign: "center" }}>Loading your wallet...</p>;
 
@@ -213,80 +246,79 @@ const handleWithdraw = async () => {
         <button style={styles.button} onClick={handleDeposit}>
           Deposit
         </button>
-        <section className="withdraw-section">
-  <h3>Withdraw Funds</h3>
 
-  <input
-    type="email"
-    placeholder="Receiver Email"
-    value={receiverEmail}
-    onChange={(e) => setReceiverEmail(e.target.value)}
-  />
+        {/* Shared currency dropdown (Option A) */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
+          <label style={{ fontSize: 14 }}>Currency to send/withdraw:</label>
+          <select value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)}>
+            <option value="GBP">GBP</option>
+            <option value="USD">USD</option>
+            <option value="KES">KES</option>
+          </select>
+        </div>
 
-  <input
-    type="number"
-    placeholder="Amount (KES)"
-    value={withdrawAmount}
-    onChange={(e) => setWithdrawAmount(e.target.value)}
-  />
+        {/* Withdraw Section */}
+        <section className="withdraw-section" style={{ marginTop: 12 }}>
+          <h3>Withdraw Funds</h3>
 
-  <select
-    value={currencyTo}
-    onChange={(e) => setCurrencyTo(e.target.value)}
-  >
-    <option value="GBP">GBP</option>
-    <option value="USD">USD</option>
-    <option value="KES">KES</option>
-  </select>
+          <input
+            type="email"
+            placeholder="Receiver Email"
+            value={receiverEmail}
+            onChange={(e) => setReceiverEmail(e.target.value)}
+          />
 
-  <button onClick={handlePreviewConversion}>Preview Conversion</button>
+          <input
+            type="number"
+            placeholder="Amount (KES)"
+            value={withdrawAmount}
+            onChange={(e) => setWithdrawAmount(e.target.value)}
+          />
 
-  {preview && (
-    <div>
-      <p>Rate: {preview.rate}</p>
-      <p>
-        Recipient will receive: {preview.converted_amount} {currencyTo}
-      </p>
-      <button onClick={handleWithdraw}>Confirm and Send</button>
-    </div>
-  )}
+          <button onClick={handlePreviewConversion}>Preview Conversion</button>
 
-  {withdrawMessage && <p>{withdrawMessage}</p>}
-</section>
+          {preview && (
+            <div>
+              <p>Rate: {preview.rate}</p>
+              <p>
+                Recipient will receive: {preview.converted_amount} {currencyTo}
+              </p>
+              <button onClick={handleWithdraw}>Confirm and Send</button>
+            </div>
+          )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {withdrawMessage && <p>{withdrawMessage}</p>}
+        </section>
+
+        {/* Send Money Section */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: 12 }}>
           {!showTransferForm ? (
             <button style={styles.button} onClick={() => setShowTransferForm(true)}>
               Send Money
             </button>
           ) : (
-            <div style={{ backgroundColor: '#fff', padding: '12px', borderRadius: 8 }}>
+            <div style={{ backgroundColor: "#fff", padding: "12px", borderRadius: 8 }}>
               <h4>Send Money</h4>
               <input
                 type="text"
                 placeholder="Recipient username or email"
                 value={transferRecipient}
                 onChange={(e) => setTransferRecipient(e.target.value)}
-                style={{ width: '100%', padding: '8px', marginBottom: '8px' }}
+                style={{ width: "100%", padding: "8px", marginBottom: "8px" }}
               />
 
               <input
                 type="number"
-                placeholder={`Amount (${user?.wallet_balance ? 'your currency' : ''})`}
+                placeholder={`Amount (${user?.wallet_balance ? "your currency" : ""})`}
                 value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)}
-                style={{ width: '100%', padding: '8px', marginBottom: '8px' }}
+                style={{ width: "100%", padding: "8px", marginBottom: "8px" }}
               />
 
-              <select value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)} style={{ marginBottom: 8 }}>
-                <option value="GBP">GBP</option>
-                <option value="USD">USD</option>
-                <option value="KES">KES</option>
-              </select>
-
-              <div style={{ display: 'flex', gap: 8 }}>
+              {/* Note: shared currency dropdown is above; keeping it simple here */}
+              <div style={{ display: "flex", gap: 8 }}>
                 <button style={styles.button} onClick={handleSendClick} disabled={transferProcessing}>
-                  {transferProcessing ? 'Sending...' : 'Send'}
+                  {transferProcessing ? "Sending..." : "Send"}
                 </button>
                 <button
                   style={{ padding: 8 }}
