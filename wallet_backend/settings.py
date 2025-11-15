@@ -42,9 +42,8 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# Exchange Rate API Key - support both EXCHANGE_API_KEY and legacy EXCHANGE_RATE_API_KEY
-# Put your key in .env as EXCHANGE_API_KEY
-EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY") or os.getenv("EXCHANGE_RATE_API_KEY", "")
+# Exchange Rate API Key 
+EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY")
 
 # Application definition
 
