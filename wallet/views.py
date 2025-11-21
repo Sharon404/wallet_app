@@ -10,7 +10,7 @@ from django.core.cache import cache
 from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
-from .models import Wallet, Transaction, OTP, CustomUser
+from .models import Wallet, Transaction, OTP, CustomUser, CURRENCY_CHOICES
 from .serializers import (
     WalletSerializer,
     WithdrawSerializer,
@@ -31,9 +31,8 @@ from django.db import transaction
 from .utils import convert_currency
 
 
-
-
-
+# Constants
+LARGE_TRANSFER_THRESHOLD = Decimal('50000.00')
 User = get_user_model()
 
 
@@ -153,7 +152,7 @@ def user_profile(request):
     user = request.user
     wallet, _ = Wallet.objects.get_or_create(user=user)
     
-    # Get user's transactions
+    # Get user's transactions (Transaction model has transaction_type, amount, description, counterparty)
     transactions = Transaction.objects.filter(wallet=wallet).order_by('-timestamp')
     transaction_data = [
         {
@@ -161,6 +160,7 @@ def user_profile(request):
             'amount': str(t.amount),
             'description': t.description,
             'timestamp': t.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            'counterparty': t.counterparty or 'N/A',  # Email or 'external'
         }
         for t in transactions
     ]
@@ -170,6 +170,7 @@ def user_profile(request):
         'username': user.username,
         'email': user.email,
         'wallet_balance': str(wallet.balance),
+        'wallet_currency': getattr(wallet, 'currency', 'KES'),
         'transactions': transaction_data,
     })
 
@@ -194,7 +195,9 @@ def convert_preview(request):
         # parse decimal safely
         amount = Decimal(str(amount_raw))
 
-        from_currency = request.data.get("currency_from") or getattr(request.user.wallet, "currency", "KES")
+        # prefer explicit currency_from; otherwise use the user's wallet currency
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        from_currency = request.data.get("currency_from") or getattr(wallet, "currency", "KES")
         to_currency = request.data.get("currency_to")
         if not to_currency:
             return Response({"error": "Missing 'currency_to'."}, status=status.HTTP_400_BAD_REQUEST)
@@ -213,6 +216,15 @@ def convert_preview(request):
         return Response({"error": f"Conversion failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
 
+# ---------------- SUPPORTED CURRENCIES ----------------
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def currencies_list(request):
+    """Return supported currency codes and labels."""
+    data = [{'code': code, 'name': name} for code, name in CURRENCY_CHOICES]
+    return Response({'currencies': data})
+
+
 # ---------------- WALLET VIEW ----------------
 class WalletView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -221,6 +233,25 @@ class WalletView(APIView):
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
         serializer = WalletSerializer(wallet)
         return Response(serializer.data)
+
+    def put(self, request):
+        """Update wallet settings (e.g., currency)."""
+        try:
+            wallet, _ = Wallet.objects.get_or_create(user=request.user)
+            currency = request.data.get('currency')
+            if not currency:
+                return Response({'error': 'currency is required'}, status=400)
+
+            valid_codes = [c[0] for c in Wallet._meta.get_field('currency').choices]
+            if currency not in valid_codes:
+                return Response({'error': 'Unsupported currency'}, status=400)
+
+            wallet.currency = currency
+            wallet.save()
+            serializer = WalletSerializer(wallet)
+            return Response(serializer.data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
 
 
 # ---------------- DEPOSIT ----------------
@@ -441,153 +472,5 @@ class TransactionFlowView(APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
-# ---------------- WITHDRAW / SEND TO EXTERNAL ----------------
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def withdraw_and_send(request):
-    """Withdraw from user's wallet and send to an external receiver (by email).
-
-    Uses WithdrawSerializer. Performs currency conversion if needed and
-    creates a Transaction record with status PENDING.
-    """
-    serializer = WithdrawSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=400)
-
-    amount = serializer.validated_data['amount']
-    currency_to = serializer.validated_data['currency_to']
-    receiver_email = serializer.validated_data['receiver_email']
-
-    wallet, _ = Wallet.objects.get_or_create(user=request.user)
-    if wallet.balance < amount:
-        return Response({'error': 'Insufficient balance.'}, status=400)
-
-    try:
-        with transaction.atomic():
-            if wallet.currency == currency_to:
-                converted_amount = amount
-                rate = Decimal('1.00')
-            else:
-                converted_amount, rate = convert_currency(amount, wallet.currency, currency_to)
-
-            # Deduct from wallet
-            wallet.balance -= amount
-            wallet.save()
-
-            Transaction.objects.create(
-                wallet=wallet,
-                transaction_type='WITHDRAWAL',
-                amount=amount,
-                currency_from=wallet.currency,
-                currency_to=currency_to,
-                converted_amount=converted_amount,
-                exchange_rate=rate,
-                counterparty=receiver_email,
-                status='PENDING',
-                description=f'Withdrawal to {receiver_email}'
-            )
-
-        return Response({
-            'message': 'Withdrawal request submitted',
-            'new_balance': str(wallet.balance),
-            'amount_sent': str(converted_amount),
-            'currency_to': currency_to
-        }, status=200)
-
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
-
-
-# ---------------- SEND MONEY / TRANSFER ----------------
-User = get_user_model()
-LARGE_TRANSFER_THRESHOLD = Decimal('50000.00')
-class SendMoneyView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        try:
-            sender = request.user
-            amount = Decimal(request.data.get('amount', '0'))
-            # accept either 'receiver' or legacy 'recipient' from frontend
-            receiver_identifier = request.data.get('receiver') or request.data.get('recipient')  # username or email
-            currency_to = request.data.get('currency_to')
-            otp = request.data.get('otp')
-
-            # 1️⃣ Basic Validation
-            if not receiver_identifier or not amount or amount <= 0:
-                return Response({'error': 'Receiver, amount, and currency are required.'}, status=400)
-
-            sender_wallet, _ = Wallet.objects.get_or_create(user=sender)
-
-            if sender_wallet.balance < amount:
-                return Response({'error': 'Insufficient balance.'}, status=400)
-
-            # 2️⃣ Find Receiver (accepts email or username)
-            try:
-                if '@' in receiver_identifier:
-                    receiver_user = User.objects.get(email=receiver_identifier)
-                else:
-                    receiver_user = User.objects.get(username=receiver_identifier)
-                receiver_wallet, _ = Wallet.objects.get_or_create(user=receiver_user)
-            except User.DoesNotExist:
-                return Response({'error': 'Recipient not found.'}, status=400)
-
-            # 3️⃣ Optional: OTP validation for large transfers
-            if amount >= LARGE_TRANSFER_THRESHOLD and not otp:
-                return Response({'error': 'OTP required for large transfers.'}, status=400)
-
-            # 4️⃣ Perform Conversion (if currencies differ)
-            with transaction.atomic():
-                if sender_wallet.currency == receiver_wallet.currency:
-                    rate = Decimal('1.00')
-                    converted_amount = amount
-                else:
-                    converted_amount, rate = convert_currency(amount, sender_wallet.currency, receiver_wallet.currency)
-
-                # Deduct from sender
-                sender_wallet.balance -= amount
-                sender_wallet.save()
-
-                # Credit receiver
-                receiver_wallet.balance += converted_amount
-                receiver_wallet.save()
-
-                # 5️⃣ Record transactions
-                Transaction.objects.create(
-                    wallet=sender_wallet,
-                    transaction_type='TRANSFER',
-                    amount=amount,
-                    currency_from=sender_wallet.currency,
-                    currency_to=receiver_wallet.currency,
-                    converted_amount=converted_amount,
-                    exchange_rate=rate,
-                    counterparty=receiver_user.email,
-                    status='SUCCESS',
-                    description=f'Sent to {receiver_user.email}'
-                )
-
-                Transaction.objects.create(
-                    wallet=receiver_wallet,
-                    transaction_type='TRANSFER',
-                    amount=converted_amount,
-                    currency_from=sender_wallet.currency,
-                    currency_to=receiver_wallet.currency,
-                    converted_amount=converted_amount,
-                    exchange_rate=rate,
-                    counterparty=sender.email,
-                    status='SUCCESS',
-                    description=f'Received from {sender.email}'
-                )
-
-            # 6️⃣ Response
-            return Response({
-                'message': 'Transfer successful',
-                'converted_amount': str(converted_amount),
-                'rate': str(rate),
-                'sender_balance': str(sender_wallet.balance),
-                'receiver': receiver_user.email,
-                'currency_to': receiver_wallet.currency,
-            }, status=200)
-
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
+# All transaction types (transfer, withdraw, deposit) now handled by TransactionFlowView
+# SendMoneyView and withdraw_and_send removed in favor of unified endpoint

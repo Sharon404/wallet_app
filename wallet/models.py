@@ -31,10 +31,22 @@ class OTP(models.Model):
 
 #  Wallet model linked to CustomUser
 CURRENCY_CHOICES = [
+    # East Africa / nearby
     ('KES', 'Kenyan Shilling'),
+    ('UGX', 'Ugandan Shilling'),
+    ('TZS', 'Tanzanian Shilling'),
+    ('RWF', 'Rwandan Franc'),
+    ('BIF', 'Burundi Franc'),
+    ('ZAR', 'South African Rand'),
+
+    # Popular international currencies used by many Kenyans abroad
     ('USD', 'US Dollar'),
     ('GBP', 'British Pound'),
     ('EUR', 'Euro'),
+    ('AED', 'UAE Dirham'),
+    ('SAR', 'Saudi Riyal'),
+    ('EGP', 'Egyptian Pound'),
+    ('NGN', 'Nigerian Naira'),
 ]
 
 class Wallet(models.Model):

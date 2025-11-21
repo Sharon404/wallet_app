@@ -105,10 +105,13 @@ def convert_currency(amount: Decimal, from_currency: str, to_currency: str):
                 "key": EXCHANGE_API_KEY,
             })
         try:
+            print(f"[CONVERT_CURRENCY] Requesting rate: {from_currency} -> {to_currency}, API key present: {bool(EXCHANGE_API_KEY)}")
             resp = requests.get(EXCHANGE_API, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
+            print(f"[CONVERT_CURRENCY] API response: {data}")
         except Exception as e:
+            print(f"[CONVERT_CURRENCY] Error: {e}")
             raise Exception(f"Exchange rate fetch failed: {e}")
 
         # If API returned an explicit error (e.g., missing access key), surface it

@@ -2,15 +2,14 @@ from django.urls import path
 from .views import (
     WalletView,
     DepositView,
-    SendMoneyView,
     TransactionFlowView,
     convert_preview,
+    currencies_list,
     register_user,
     activate_account,
     login_user,
     verify_otp,
     user_profile,
-    withdraw_and_send
 )
 
 urlpatterns = [
@@ -23,6 +22,7 @@ urlpatterns = [
     path('withdraw/', TransactionFlowView.as_view(), name='withdraw_and_send'),
     path('transaction/', TransactionFlowView.as_view(), name='transaction_flow'),
     path('convert-preview/', convert_preview, name='convert_preview'),
+    path('currencies/', currencies_list, name='currencies_list'),
 
     # Authentication endpoints
     path('register/', register_user, name='register_user'),

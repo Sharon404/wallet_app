@@ -50,7 +50,7 @@ class WalletSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Wallet
-        fields = ['wallet_id', 'balance', 'created_at', 'user']
+        fields = ['wallet_id', 'balance', 'currency', 'created_at', 'user']
 
 
 # Transaction Serializer
