@@ -15,7 +15,6 @@ const WalletHome = () => {
   const [currencyTo, setCurrencyTo] = useState("GBP");
   const [currencies, setCurrencies] = useState([]);
   const [walletCurrency, setWalletCurrency] = useState("KES");
-  const [updatingWalletCurrency, setUpdatingWalletCurrency] = useState(false);
 
   // Withdraw
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -71,7 +70,7 @@ const WalletHome = () => {
 
 // Deposit
   const handleDeposit = async () => {
-    const amount = prompt("Enter deposit amount (KES):");
+    const amount = prompt(`Enter deposit amount (${walletCurrency}):`);
     if (!amount || isNaN(amount) || amount <= 0) {
       return alert("Invalid deposit amount.");
     }
@@ -168,25 +167,7 @@ const WalletHome = () => {
     }
   };
 
-  const updateWalletCurrency = async (newCurrency) => {
-    try {
-      setUpdatingWalletCurrency(true);
-      const token = localStorage.getItem("access_token");
-      const res = await axios.put(
-        "/wallet/",
-        { currency: newCurrency },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      setWalletCurrency(res.data.currency || newCurrency);
-      // refresh transactions and balance after currency change
-      fetchTransactions();
-      alert(`Wallet currency updated to ${newCurrency}`);
-    } catch (err) {
-      alert(err.response?.data?.error || "Failed to update wallet currency.");
-    } finally {
-      setUpdatingWalletCurrency(false);
-    }
-  };
+  // Wallet currency is fixed at account creation and cannot be changed here.
 
   // Send money
   const handleSendClick = async () => {
@@ -254,22 +235,7 @@ const WalletHome = () => {
         <h3>Wallet Balance</h3>
         <p style={styles.balance}>{walletCurrency} {balance.toFixed(2)}</p>
         <div style={{ marginTop: 8 }}>
-          <label>Your wallet currency: </label>
-          <select
-            value={walletCurrency}
-            onChange={(e) => setWalletCurrency(e.target.value)}
-          >
-            {currencies.map((c) => (
-              <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-            ))}
-          </select>
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={() => updateWalletCurrency(walletCurrency)}
-            disabled={updatingWalletCurrency}
-          >
-            {updatingWalletCurrency ? 'Saving...' : 'Save'}
-          </button>
+          <strong>Your wallet currency:</strong> {walletCurrency}
         </div>
       </div>
 
@@ -371,7 +337,7 @@ const WalletHome = () => {
             {transactions.map((tx, index) => (
               <li key={index} style={styles.transactionItem}>
                 <span>
-                  {tx.transaction_type}: <strong>KES {tx.amount}</strong>
+                  {tx.transaction_type}: <strong>{walletCurrency} {tx.amount}</strong>
                 </span>
                 <br />
                 <small>

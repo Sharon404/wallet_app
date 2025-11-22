@@ -218,7 +218,7 @@ def convert_preview(request):
 
 # ---------------- SUPPORTED CURRENCIES ----------------
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def currencies_list(request):
     """Return supported currency codes and labels."""
     data = [{'code': code, 'name': name} for code, name in CURRENCY_CHOICES]
@@ -233,25 +233,6 @@ class WalletView(APIView):
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
         serializer = WalletSerializer(wallet)
         return Response(serializer.data)
-
-    def put(self, request):
-        """Update wallet settings (e.g., currency)."""
-        try:
-            wallet, _ = Wallet.objects.get_or_create(user=request.user)
-            currency = request.data.get('currency')
-            if not currency:
-                return Response({'error': 'currency is required'}, status=400)
-
-            valid_codes = [c[0] for c in Wallet._meta.get_field('currency').choices]
-            if currency not in valid_codes:
-                return Response({'error': 'Unsupported currency'}, status=400)
-
-            wallet.currency = currency
-            wallet.save()
-            serializer = WalletSerializer(wallet)
-            return Response(serializer.data)
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
 
 
 # ---------------- DEPOSIT ----------------

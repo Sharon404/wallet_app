@@ -97,5 +97,7 @@ class Transaction(models.Model):
 @receiver(post_save, sender=CustomUser)
 def create_user_wallet(sender, instance, created, **kwargs):
     if created:
-        Wallet.objects.create(user=instance)
+        # Only create a wallet if one does not already exist (registration serializer creates it explicitly with chosen currency)
+        if not Wallet.objects.filter(user=instance).exists():
+            Wallet.objects.create(user=instance, currency='KES')
 

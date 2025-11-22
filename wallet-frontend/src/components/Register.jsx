@@ -7,6 +7,8 @@ export default function Register() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
+  const [currencies, setCurrencies] = useState([]);
+  const [currency, setCurrency] = useState("KES");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -32,6 +34,7 @@ export default function Register() {
         mobile,
         password,
         confirm_password: confirmPassword,
+        currency,
       });
 
       setMessage(response.data?.message || "✅ Account created successfully!");
@@ -57,6 +60,21 @@ export default function Register() {
       setMessageType("error");
     }
   };
+
+  React.useEffect(() => {
+    // fetch supported currencies (no auth required)
+    api
+      .get("currencies/")
+      .then((res) => {
+        const cs = res.data.currencies || [];
+        setCurrencies(cs);
+        if (cs.length) setCurrency(cs[0].code || "KES");
+      })
+      .catch(() => {
+        // fallback
+        setCurrencies([{ code: "KES", name: "Kenyan Shilling" }]);
+      });
+  }, []);
 
   return (
     <div style={{ maxWidth: 400, margin: "50px auto", textAlign: "center" }}>
@@ -117,6 +135,19 @@ export default function Register() {
           required
           style={{ width: "100%", padding: "10px", margin: "8px 0" }}
         />
+        <div style={{ margin: "8px 0" }}>
+          <label style={{ display: "block", marginBottom: 6 }}>Wallet Currency</label>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            required
+            style={{ width: "100%", padding: "10px" }}
+          >
+            {currencies.map((c) => (
+              <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+            ))}
+          </select>
+        </div>
         <button
           type="submit"
           style={{
