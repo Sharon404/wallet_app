@@ -11,6 +11,17 @@ import random
 #  Custom User model
 class CustomUser(AbstractUser):
     mobile = models.CharField(max_length=15, blank=True, null=True)
+    pin = models.CharField(max_length=128, blank=True, null=True, help_text="Hashed 6-digit PIN for transfers")
+
+    def set_pin(self, raw_pin):
+        """Hash and store the 6-digit PIN."""
+        from django.contrib.auth.hashers import make_password
+        self.pin = make_password(raw_pin)
+
+    def check_pin(self, raw_pin):
+        """Verify a raw PIN against the stored hashed PIN."""
+        from django.contrib.auth.hashers import check_password
+        return check_password(raw_pin, self.pin)
 
     def __str__(self):
         return self.username

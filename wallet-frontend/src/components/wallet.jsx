@@ -28,6 +28,7 @@ const WalletHome = () => {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferPreview, setTransferPreview] = useState(null);
   const [transferProcessing, setTransferProcessing] = useState(false);
+  const [pin, setPin] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -141,6 +142,8 @@ const WalletHome = () => {
       return setWithdrawMessage("Enter a valid amount.");
     if (!receiverEmail)
       return setWithdrawMessage("Enter a receiver email.");
+    if (!pin || pin.length !== 6)
+      return setWithdrawMessage("Enter your 6-digit PIN.");
 
     try {
       const token = localStorage.getItem("access_token");
@@ -150,6 +153,7 @@ const WalletHome = () => {
           amount: withdrawAmount,
           currency_to: currencyTo,
           receiver_email: receiverEmail,
+          pin,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -160,6 +164,7 @@ const WalletHome = () => {
       setPreview(null);
       setWithdrawAmount("");
       setReceiverEmail("");
+      setPin("");
       setBalance(parseFloat(res.data.new_balance));
       fetchTransactions();
     } catch (err) {
@@ -175,6 +180,8 @@ const WalletHome = () => {
 
     if (!transferRecipient || !transferAmount || transferAmount <= 0)
       return alert("Enter valid recipient & amount.");
+    if (!pin || pin.length !== 6)
+      return alert("Enter your 6-digit PIN.");
 
     try {
       setTransferProcessing(true);
@@ -206,6 +213,7 @@ const WalletHome = () => {
           recipient: transferRecipient,
           amount: transferAmount,
           currency_to: currencyTo,
+          pin,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -217,6 +225,7 @@ const WalletHome = () => {
       setTransferAmount("");
       setTransferPreview(null);
       setShowTransferForm(false);
+      setPin("");
       fetchTransactions();
     } catch (err) {
       alert(err.response?.data?.error || "Transfer failed.");
@@ -265,6 +274,21 @@ const WalletHome = () => {
             value={withdrawAmount}
             onChange={(e) => setWithdrawAmount(e.target.value)}
           />
+          <input
+            type="email"
+            placeholder="Receiver Email"
+            value={receiverEmail}
+            onChange={(e) => setReceiverEmail(e.target.value)}
+            style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+          />
+          <input
+            type="text"
+            placeholder="6-Digit PIN"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+            maxLength="6"
+            style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+          />
           <button onClick={handlePreviewConversion}>Preview</button>
 
           {preview && (
@@ -273,6 +297,7 @@ const WalletHome = () => {
               <p>
                 You will get: {preview.converted_amount} {currencyTo}
               </p>
+              <button onClick={handleWithdraw}>Confirm Withdraw</button>
             </div>
           )}
 
@@ -300,6 +325,14 @@ const WalletHome = () => {
                 placeholder="Amount"
                 value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)}
+              />
+              <input
+                type="text"
+                placeholder="6-Digit PIN"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+                maxLength="6"
+                style={{ width: "100%", padding: "8px", margin: "8px 0" }}
               />
 
               <div style={{ display: "flex", gap: 10 }}>

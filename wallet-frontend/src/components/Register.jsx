@@ -11,6 +11,8 @@ export default function Register() {
   const [currency, setCurrency] = useState("KES");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [pin, setPin] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState(""); // success or error
 
@@ -25,6 +27,18 @@ export default function Register() {
       return;
     }
 
+    if (pin !== pinConfirm) {
+      setMessage("❌ PINs do not match!");
+      setMessageType("error");
+      return;
+    }
+
+    if (pin.length !== 6 || !/^\d+$/.test(pin)) {
+      setMessage("❌ PIN must be exactly 6 digits!");
+      setMessageType("error");
+      return;
+    }
+
     try {
       const response = await api.post("register/", {
         first_name: firstName,
@@ -35,6 +49,8 @@ export default function Register() {
         password,
         confirm_password: confirmPassword,
         currency,
+        pin,
+        pin_confirm: pinConfirm,
       });
 
       setMessage(response.data?.message || "✅ Account created successfully!");
@@ -48,6 +64,8 @@ export default function Register() {
       setMobile("");
       setPassword("");
       setConfirmPassword("");
+      setPin("");
+      setPinConfirm("");
 
       // Auto-hide message after 4 seconds
       setTimeout(() => setMessage(""), 4000);
@@ -55,6 +73,7 @@ export default function Register() {
       const errorMsg =
         error.response?.data?.error ||
         error.response?.data?.message ||
+        error.response?.data?.pin?.join(" ") ||
         "❌ Registration failed. Please try again.";
       setMessage(errorMsg);
       setMessageType("error");
@@ -148,6 +167,24 @@ export default function Register() {
             ))}
           </select>
         </div>
+        <input
+          type="text"
+          placeholder="6-Digit PIN (numbers only)"
+          value={pin}
+          onChange={(e) => setPin(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+          maxLength="6"
+          required
+          style={{ width: "100%", padding: "10px", margin: "8px 0" }}
+        />
+        <input
+          type="text"
+          placeholder="Confirm 6-Digit PIN"
+          value={pinConfirm}
+          onChange={(e) => setPinConfirm(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+          maxLength="6"
+          required
+          style={{ width: "100%", padding: "10px", margin: "8px 0" }}
+        />
         <button
           type="submit"
           style={{

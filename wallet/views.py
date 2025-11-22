@@ -47,6 +47,7 @@ def register_user(request):
         return Response({
             'message': 'Registration successful! Please check your email to activate your account.'
         }, status=status.HTTP_201_CREATED)
+    print("❌ Registration serializer errors:", serializer.errors)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # ---------------- ACTIVATE ACCOUNT ----------------
@@ -298,9 +299,18 @@ class TransactionFlowView(APIView):
             receiver_email = request.data.get('receiver_email')
             currency_to = request.data.get('currency_to')
             otp = request.data.get('otp')
+            pin = request.data.get('pin')
 
             if amount <= 0:
                 return Response({'error': 'Positive amount is required.'}, status=400)
+
+            # PIN verification required for all transfers from wallet
+            if source == 'wallet':
+                if not pin:
+                    return Response({'error': 'PIN is required for transfers.'}, status=400)
+                # Verify PIN
+                if not request.user.check_pin(pin):
+                    return Response({'error': 'Invalid PIN.'}, status=401)
 
             # wallet -> wallet
             if source == 'wallet' and destination == 'wallet':

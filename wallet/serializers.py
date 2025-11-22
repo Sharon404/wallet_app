@@ -19,18 +19,30 @@ class RegisterSerializer(serializers.ModelSerializer):
     confirm_password = serializers.CharField(write_only=True)
     # require currency at registration (chosen when account is created)
     currency = serializers.ChoiceField(choices=[c[0] for c in Wallet._meta.get_field('currency').choices])
+    # PIN: 6-digit code for transfers
+    pin = serializers.CharField(write_only=True, min_length=6, max_length=6, help_text="6-digit PIN")
+    pin_confirm = serializers.CharField(write_only=True, min_length=6, max_length=6, help_text="Confirm 6-digit PIN")
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'username', 'email', 'mobile', 'password', 'confirm_password', 'currency']
+        fields = ['first_name', 'last_name', 'username', 'email', 'mobile', 'password', 'confirm_password', 'currency', 'pin', 'pin_confirm']
 
     def validate(self, data):
-        if data['password'] != data['confirm_password']:
+        if data.get('password') != data.get('confirm_password'):
             raise serializers.ValidationError({"password": "Passwords do not match."})
+        pin = data.get('pin', '')
+        pin_confirm = data.get('pin_confirm', '')
+        if pin != pin_confirm:
+            raise serializers.ValidationError({"pin": "PINs do not match."})
+        # Validate PIN is all digits and 6 characters
+        if not pin or len(pin) != 6 or not pin.isdigit():
+            raise serializers.ValidationError({"pin": "PIN must be exactly 6 digits."})
         return data
 
     def create(self, validated_data):
         validated_data.pop('confirm_password')
+        validated_data.pop('pin_confirm')
+        pin = validated_data.pop('pin')
         currency = validated_data.pop('currency', None)
         # Set a flag to prevent signal from creating a wallet
         from django.db.models.signals import post_save
@@ -38,6 +50,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         post_save.disconnect(create_user_wallet, sender=CustomUser)
         try:
             user = User.objects.create_user(**validated_data)
+            # Set hashed PIN
+            user.set_pin(pin)
+            user.save()
             # create wallet with chosen currency
             if currency:
                 Wallet.objects.create(user=user, currency=currency)
