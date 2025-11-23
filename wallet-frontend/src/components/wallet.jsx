@@ -30,6 +30,19 @@ const WalletHome = () => {
   const [transferProcessing, setTransferProcessing] = useState(false);
   const [pin, setPin] = useState("");
 
+  // M-Pesa Deposit
+  const [showMpesaDeposit, setShowMpesaDeposit] = useState(false);
+  const [mpesaDepositPhone, setMpesaDepositPhone] = useState("");
+  const [mpesaDepositAmount, setMpesaDepositAmount] = useState("");
+  const [mpesaDepositMessage, setMpesaDepositMessage] = useState("");
+
+  // M-Pesa Withdrawal
+  const [showMpesaWithdraw, setShowMpesaWithdraw] = useState(false);
+  const [mpesaWithdrawPhone, setMpesaWithdrawPhone] = useState("");
+  const [mpesaWithdrawAmount, setMpesaWithdrawAmount] = useState("");
+  const [mpesaWithdrawMessage, setMpesaWithdrawMessage] = useState("");
+  const [mpesaWithdrawPin, setMpesaWithdrawPin] = useState("");
+
   useEffect(() => {
     const token = localStorage.getItem("access_token");
     if (!token) return navigate("/login");
@@ -234,6 +247,70 @@ const WalletHome = () => {
     }
   };
 
+  // M-Pesa Deposit Handler
+  const handleMpesaDeposit = async () => {
+    if (!mpesaDepositPhone || !mpesaDepositAmount || mpesaDepositAmount <= 0) {
+      setMpesaDepositMessage("Enter valid phone and amount.");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await axios.post(
+        "/mpesa/stk/",
+        {
+          phone: mpesaDepositPhone,
+          amount: mpesaDepositAmount,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setMpesaDepositMessage("STK push sent! Check your phone for M-Pesa prompt.");
+      setMpesaDepositPhone("");
+      setMpesaDepositAmount("");
+      
+      // Refresh balance after 5 seconds (callback may take time)
+      setTimeout(() => fetchTransactions(), 5000);
+    } catch (err) {
+      setMpesaDepositMessage(err.response?.data?.error || "M-Pesa deposit failed.");
+    }
+  };
+
+  // M-Pesa Withdrawal Handler
+  const handleMpesaWithdraw = async () => {
+    if (!mpesaWithdrawPhone || !mpesaWithdrawAmount || mpesaWithdrawAmount <= 0) {
+      setMpesaWithdrawMessage("Enter valid phone and amount.");
+      return;
+    }
+
+    if (!mpesaWithdrawPin || mpesaWithdrawPin.length !== 6) {
+      setMpesaWithdrawMessage("Enter your 6-digit PIN.");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await axios.post(
+        "/mpesa/withdraw/",
+        {
+          phone: mpesaWithdrawPhone,
+          amount: mpesaWithdrawAmount,
+          pin: mpesaWithdrawPin,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setMpesaWithdrawMessage("Withdrawal initiated! Check your M-Pesa messages.");
+      setMpesaWithdrawPhone("");
+      setMpesaWithdrawAmount("");
+      setMpesaWithdrawPin("");
+      setBalance(parseFloat(res.data.new_balance || balance));
+      fetchTransactions();
+    } catch (err) {
+      setMpesaWithdrawMessage(err.response?.data?.error || "M-Pesa withdrawal failed.");
+    }
+  };
+
   if (loading) return <p style={{ textAlign: "center" }}>Loading wallet...</p>;
 
   return (
@@ -252,6 +329,76 @@ const WalletHome = () => {
         <button style={styles.button} onClick={handleDeposit}>
           Deposit
         </button>
+
+        <button 
+          style={{ ...styles.button, backgroundColor: "#28a745" }} 
+          onClick={() => setShowMpesaDeposit(!showMpesaDeposit)}
+        >
+          Deposit via M-Pesa
+        </button>
+
+        {showMpesaDeposit && (
+          <div style={{ background: "#f9f9f9", padding: 15, borderRadius: 8, marginTop: 10 }}>
+            <h4>M-Pesa Deposit</h4>
+            <input
+              type="text"
+              placeholder="Phone (254XXXXXXXXX)"
+              value={mpesaDepositPhone}
+              onChange={(e) => setMpesaDepositPhone(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="number"
+              placeholder={`Amount (${walletCurrency})`}
+              value={mpesaDepositAmount}
+              onChange={(e) => setMpesaDepositAmount(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <button onClick={handleMpesaDeposit} style={{ ...styles.button, width: "100%" }}>
+              Send STK Push
+            </button>
+            {mpesaDepositMessage && <p style={{ color: "green", marginTop: 8 }}>{mpesaDepositMessage}</p>}
+          </div>
+        )}
+
+        <button 
+          style={{ ...styles.button, backgroundColor: "#dc3545", marginTop: 10 }} 
+          onClick={() => setShowMpesaWithdraw(!showMpesaWithdraw)}
+        >
+          Withdraw via M-Pesa
+        </button>
+
+        {showMpesaWithdraw && (
+          <div style={{ background: "#fff3f3", padding: 15, borderRadius: 8, marginTop: 10 }}>
+            <h4>M-Pesa Withdrawal</h4>
+            <input
+              type="text"
+              placeholder="Phone (254XXXXXXXXX)"
+              value={mpesaWithdrawPhone}
+              onChange={(e) => setMpesaWithdrawPhone(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="number"
+              placeholder={`Amount (${walletCurrency})`}
+              value={mpesaWithdrawAmount}
+              onChange={(e) => setMpesaWithdrawAmount(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="text"
+              placeholder="6-Digit PIN"
+              value={mpesaWithdrawPin}
+              onChange={(e) => setMpesaWithdrawPin(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+              maxLength="6"
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <button onClick={handleMpesaWithdraw} style={{ ...styles.button, width: "100%" }}>
+              Initiate Withdrawal
+            </button>
+            {mpesaWithdrawMessage && <p style={{ color: mpesaWithdrawMessage.includes("Error") ? "red" : "green", marginTop: 8 }}>{mpesaWithdrawMessage}</p>}
+          </div>
+        )}
 
         <div style={{ marginTop: 10 }}>
           <label>Currency to send/withdraw: </label>

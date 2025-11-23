@@ -6,6 +6,7 @@ import uuid
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
+from datetime import timedelta
 import random
 
 #  Custom User model
@@ -37,7 +38,9 @@ class OTP(models.Model):
         return f"OTP for {self.user.username} - {self.code}"
 
     def is_valid(self):
-        return timezone.now() < self.expires_at
+        # OTP valid for 5 minutes
+        expiry_time = timezone.now() - timedelta(minutes=5)
+        return self.created_at >= expiry_time
 
 
 #  Wallet model linked to CustomUser
@@ -112,3 +115,23 @@ def create_user_wallet(sender, instance, created, **kwargs):
         if not Wallet.objects.filter(user=instance).exists():
             Wallet.objects.create(user=instance, currency='KES')
 
+
+#  Wallet Transaction model for M-Pesa operations
+class WalletTransaction(models.Model):
+    TRANSACTION_TYPES = (
+        ("deposit", "Deposit"),
+        ("withdraw", "Withdraw"),
+        ("transfer_in", "Transfer In"),
+        ("transfer_out", "Transfer Out"),
+    )
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    phone = models.CharField(max_length=15, null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
+    status = models.CharField(max_length=20, default="pending")
+    reference = models.CharField(max_length=50, unique=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user} - {self.type} - {self.amount}"

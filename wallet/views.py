@@ -3,6 +3,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model, authenticate
 from django.utils.http import urlsafe_base64_decode
 from django.contrib.auth.tokens import default_token_generator
@@ -10,7 +11,7 @@ from django.core.cache import cache
 from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
-from .models import Wallet, Transaction, OTP, CustomUser, CURRENCY_CHOICES
+from .models import Wallet, Transaction, OTP, CustomUser, CURRENCY_CHOICES, WalletTransaction
 from .serializers import (
     WalletSerializer,
     WithdrawSerializer,
@@ -463,5 +464,126 @@ class TransactionFlowView(APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
-# All transaction types (transfer, withdraw, deposit) now handled by TransactionFlowView
-# SendMoneyView and withdraw_and_send removed in favor of unified endpoint
+
+# ---------------- M-PESA STK PUSH ----------------
+@api_view(["POST"])
+def initiate_stk(request):
+    phone = request.data.get("phone")
+    amount = request.data.get("amount")
+
+    if not phone or not amount:
+        return Response({"error": "Phone and amount required"}, status=400)
+
+    from .mpesa import stk_push
+    res = stk_push(phone, amount)
+    
+    if res.get("error"):
+        return Response(res, status=500)
+
+    return Response(res)
+
+
+# ---------------- M-PESA CALLBACK ----------------
+@api_view(["POST"])
+@csrf_exempt
+def mpesa_callback(request):
+    data = request.data
+
+    try:
+        result = data["Body"]["stkCallback"]
+        result_code = result["ResultCode"]
+        phone = result["CallbackMetadata"]["Item"][4]["Value"]
+        amount = result["CallbackMetadata"]["Item"][0]["Value"]
+
+        if result_code == 0:
+            # SUCCESS - CREDIT WALLET
+            WalletTransaction.objects.create(
+                phone=phone,
+                amount=amount,
+                type="deposit",
+                status="success"
+            )
+        else:
+            WalletTransaction.objects.create(
+                phone=phone,
+                type="deposit",
+                status="failed"
+            )
+
+    except Exception as e:
+        print("Callback Error:", e)
+
+    return Response({"Result": "Callback received"})
+
+
+# ---------------- M-PESA WITHDRAWAL ----------------
+@csrf_exempt
+@api_view(["POST"])
+def withdraw_from_wallet(request):
+    phone = request.data.get("phone")
+    amount_str = request.data.get("amount")  
+    pin = request.data.get("pin")
+
+    if not pin:
+        return Response({"error": "PIN required for withdrawal"}, status=400)
+
+    if not request.user.check_pin(pin):
+        return Response({"error": "Invalid PIN"}, status=401)
+
+    # Convert amount to Decimal safely
+    try:
+        amount = Decimal(amount_str)
+    except:
+        return Response({"error": "Invalid amount format"}, status=400)
+
+    wallet = Wallet.objects.get(user=request.user)
+
+    # Compare Decimal -> Decimal
+    if wallet.balance < amount:
+        return Response({"error": "Insufficient balance"}, status=400)
+
+    from .mpesa import mpesa_withdraw
+    res = mpesa_withdraw(phone, amount)
+
+    if res.get("ResponseCode") == "0":
+        wallet.balance -= amount
+        wallet.save()
+        WalletTransaction.objects.create(
+            user=request.user,
+            type="withdraw",
+            amount=amount,
+            status="pending"   # update via callback
+        )
+
+    return Response(res)
+
+# ---------------- M-PESA B2C RESULT CALLBACK ----------------
+@csrf_exempt
+@api_view(["POST"])
+def mpesa_b2c_result(request):
+    result = request.data
+
+    try:
+        result_code = result['Result']['ResultCode']
+        phone = result['Result']['ResultParameters']['ResultParameter'][1]['Value']
+        amount = result['Result']['ResultParameters']['ResultParameter'][0]['Value']
+
+        tx = WalletTransaction.objects.filter(
+            type="withdraw", amount=amount, phone=phone
+        ).last()
+
+        if result_code == 0:
+            tx.status = "success"
+        else:
+            tx.status = "failed"
+            # refund wallet
+            wallet = Wallet.objects.get(user=tx.user)
+            wallet.balance += tx.amount
+            wallet.save()
+
+        tx.save()
+
+    except Exception as e:
+        print("B2C Callback Error:", e)
+
+    return Response({"Result": "Received"})

@@ -1,4 +1,5 @@
 from django.urls import path
+from rest_framework.response import Response
 from .views import (
     WalletView,
     DepositView,
@@ -10,6 +11,10 @@ from .views import (
     login_user,
     verify_otp,
     user_profile,
+    initiate_stk,
+    mpesa_callback,
+    withdraw_from_wallet,
+    mpesa_b2c_result,
 )
 
 urlpatterns = [
@@ -23,6 +28,12 @@ urlpatterns = [
     path('transaction/', TransactionFlowView.as_view(), name='transaction_flow'),
     path('convert-preview/', convert_preview, name='convert_preview'),
     path('currencies/', currencies_list, name='currencies_list'),
+    path('mpesa/stk/', initiate_stk, name='initiate_stk'),
+    path('mpesa/callback/', mpesa_callback, name='mpesa_callback'),
+    path('mpesa/withdraw/', withdraw_from_wallet , name='mpesa_withdraw'),
+    path("mpesa/b2c/result/", mpesa_b2c_result, name='mpesa_b2c_result'),
+    path("mpesa/b2c/timeout/", lambda r: Response({"status": "timeout"}), name='mpesa_b2c_timeout'),
+
 
     # Authentication endpoints
     path('register/', register_user, name='register_user'),
