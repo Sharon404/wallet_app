@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
 from django.views.decorators.csrf import csrf_exempt
+import logging
 from django.contrib.auth import get_user_model, authenticate
 from django.utils.http import urlsafe_base64_decode
 from django.contrib.auth.tokens import default_token_generator
@@ -12,6 +13,7 @@ from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
 from .models import Wallet, Transaction, OTP, CustomUser, CURRENCY_CHOICES, WalletTransaction
+import uuid
 from .serializers import (
     WalletSerializer,
     WithdrawSerializer,
@@ -30,6 +32,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.permissions import AllowAny
 from django.db import transaction
 from .utils import convert_currency
+
+logger = logging.getLogger(__name__)
 
 
 # Constants
@@ -467,18 +471,63 @@ class TransactionFlowView(APIView):
 
 # ---------------- M-PESA STK PUSH ----------------
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def initiate_stk(request):
     phone = request.data.get("phone")
     amount = request.data.get("amount")
+
+    # Print auth header and user info for debugging
+    try:
+        print("[STK] HTTP_AUTHORIZATION:", request.META.get('HTTP_AUTHORIZATION'))
+        print("[STK] request.user:", getattr(request, 'user', None), "authenticated:", getattr(request.user, 'is_authenticated', False))
+    except Exception as e:
+        print("[STK] Error printing auth info:", e)
 
     if not phone or not amount:
         return Response({"error": "Phone and amount required"}, status=400)
 
     from .mpesa import stk_push
     res = stk_push(phone, amount)
-    
-    if res.get("error"):
+
+    # Debug/trace: log full STK response so we can see what's returned by Safaricom
+    try:
+        logger.info("STK push result: %s", res)
+        print("[STK RESULT]:", res)
+    except Exception:
+        pass
+
+    # If mpesa.py returned an explicit error dict, forward it to the frontend
+    if isinstance(res, dict) and res.get("error"):
         return Response(res, status=500)
+
+    # If STK push looks successful, create a pending WalletTransaction that the
+    # callback can later match using CheckoutRequestID or MerchantRequestID.
+    try:
+        ref = res.get('CheckoutRequestID') or res.get('MerchantRequestID')
+        response_code = res.get('ResponseCode')
+        if response_code == '0' and ref:
+            # create pending tx linked to the authenticated user
+            try:
+                from decimal import Decimal as _D
+                amount_dec = _D(str(amount))
+            except Exception:
+                amount_dec = None
+
+            # Use a unique reference, fallback to UUID
+            tx_ref = ref or str(uuid.uuid4())
+
+            # Only create if not already present
+            if not WalletTransaction.objects.filter(reference=tx_ref).exists():
+                WalletTransaction.objects.create(
+                    user=request.user,
+                    phone=phone,
+                    amount=amount_dec or Decimal('0.00'),
+                    type='deposit',
+                    status='pending',
+                    reference=tx_ref
+                )
+    except Exception:
+        logger.exception('Failed to create pending WalletTransaction for STK push')
 
     return Response(res)
 
@@ -486,32 +535,188 @@ def initiate_stk(request):
 # ---------------- M-PESA CALLBACK ----------------
 @api_view(["POST"])
 @csrf_exempt
+@permission_classes([AllowAny])
 def mpesa_callback(request):
     data = request.data
 
+    # Log raw callback body for debugging
     try:
-        result = data["Body"]["stkCallback"]
-        result_code = result["ResultCode"]
-        phone = result["CallbackMetadata"]["Item"][4]["Value"]
-        amount = result["CallbackMetadata"]["Item"][0]["Value"]
+        logger.info("Raw STK callback payload: %s", data)
+        print("[STK CALLBACK RAW]:", data)
+    except Exception:
+        pass
 
-        if result_code == 0:
-            # SUCCESS - CREDIT WALLET
-            WalletTransaction.objects.create(
-                phone=phone,
-                amount=amount,
-                type="deposit",
-                status="success"
-            )
+    try:
+        result = data.get("Body", {}).get("stkCallback", {})
+        result_code = result.get("ResultCode")
+
+        # Try to find a stable reference id
+        reference = result.get("CheckoutRequestID") or result.get("MerchantRequestID")
+
+        # Callback metadata may be missing in failure cases
+        callback_meta = result.get("CallbackMetadata", {}).get("Item", [])
+
+        # Helper to extract item by Name or fallback to indices
+        def _get_item_value(items, name=None, idx=None):
+            try:
+                if name:
+                    for it in items:
+                        if isinstance(it, dict) and it.get("Name") == name:
+                            return it.get("Value")
+                if idx is not None and idx < len(items):
+                    it = items[idx]
+                    return it.get("Value") if isinstance(it, dict) else None
+            except Exception:
+                return None
+            return None
+
+        amount = _get_item_value(callback_meta, name="Amount", idx=0)
+        phone = _get_item_value(callback_meta, name="PhoneNumber", idx=4)
+        # try MpesaReceiptNumber too for better reference
+        mpesa_receipt = _get_item_value(callback_meta, name="MpesaReceiptNumber", idx=1)
+        if not reference:
+            reference = mpesa_receipt
+
+        # Cast amount safely
+        try:
+            amount_val = Decimal(str(amount)) if amount is not None else None
+        except Exception:
+            amount_val = None
+
+        # Try to match an existing pending transaction by reference first (best
+        # way to map a callback to a user). If found, use that transaction's
+        # user and amount.
+        tx_by_ref = None
+        if reference:
+            try:
+                tx_by_ref = WalletTransaction.objects.filter(reference=reference).first()
+                if tx_by_ref:
+                    user = tx_by_ref.user
+                    # prefer the amount on the transaction if present
+                    try:
+                        amount_val = tx_by_ref.amount if tx_by_ref.amount is not None else amount_val
+                    except Exception:
+                        pass
+                    logger.info("Found pending WalletTransaction by reference %s -> user=%s amount=%s", reference, user, amount_val)
+            except Exception:
+                tx_by_ref = None
+
+        # Try to find a user with matching mobile field only if we didn't find tx_by_ref
+        user = None
+        if (not tx_by_ref) and phone:
+            # Normalize phone to a digits-only string
+            try:
+                phone_str = str(phone).strip()
+            except Exception:
+                phone_str = None
+
+            if phone_str:
+                digits = ''.join(ch for ch in phone_str if ch.isdigit())
+            else:
+                digits = None
+
+            if not digits:
+                lookup_candidates = set()
+            else:
+                lookup_candidates = set()
+                lookup_candidates.add(digits)
+                # Add variations: with/without leading +
+                lookup_candidates.add(digits.lstrip('+'))
+
+                # If starts with 0 (e.g., 07...), add 254 variant
+                if digits.startswith('0') and not digits.startswith('254'):
+                    lookup_candidates.add('254' + digits.lstrip('0'))
+                # If starts with 254, add 0-prefixed variation
+                if digits.startswith('254'):
+                    lookup_candidates.add('0' + digits[3:])
+
+                # Always add last-9 digits for fuzzy matching
+                last9 = digits[-9:]
+                lookup_candidates.add(last9)
+
+            logger.info("STK callback phone normalization: raw=%s digits=%s candidates=%s", phone, digits, lookup_candidates)
+
+            # search by mobile field
+            from .models import CustomUser
+            # Try exact/normalized matches first
+            for p in list(lookup_candidates):
+                try:
+                    if not p:
+                        continue
+                    user = CustomUser.objects.filter(mobile=p).first()
+                    if user:
+                        logger.info("Matched user by mobile exact: %s -> %s", p, user)
+                        break
+                except Exception:
+                    user = None
+
+            # Fallback: last-9 digits matching
+            if not user and digits:
+                try:
+                    last9 = digits[-9:]
+                    user = CustomUser.objects.filter(mobile__endswith=last9).first()
+                    if user:
+                        logger.info("Matched user by mobile endswith last9: %s -> %s", last9, user)
+                except Exception:
+                    user = None
+
+        if result_code == 0 and (user or tx_by_ref) and amount_val is not None:
+            # credit wallet
+            try:
+                wallet, _ = Wallet.objects.get_or_create(user=user)
+                wallet.balance += Decimal(amount_val)
+                wallet.save()
+
+                # If we matched a pending transaction, mark it successful and
+                # reuse it. Otherwise create a new transaction with a unique reference.
+                if tx_by_ref:
+                    tx_by_ref.status = 'success'
+                    tx_by_ref.amount = amount_val if (tx_by_ref.amount is None) else tx_by_ref.amount
+                    tx_by_ref.phone = phone or tx_by_ref.phone
+                    tx_by_ref.save()
+                    logger.info('Updated existing WalletTransaction %s -> status success', tx_by_ref.reference)
+                else:
+                    ref = reference or str(uuid.uuid4())
+                    WalletTransaction.objects.create(
+                        user=user,
+                        phone=phone,
+                        amount=amount_val,
+                        type="deposit",
+                        status="success",
+                        reference=ref
+                    )
+
+                logger.info(f"Credited {amount_val} to {user}. Wallet new balance: {wallet.balance}")
+
+            except Exception as e:
+                logger.exception("Error crediting wallet on STK callback: %s", e)
+
         else:
-            WalletTransaction.objects.create(
-                phone=phone,
-                type="deposit",
-                status="failed"
-            )
+            # create a failed/pending transaction only if we can identify a user
+            try:
+                ref = reference or (mpesa_receipt or f"none-{random.randint(100000,999999)}")
+                if tx_by_ref:
+                    tx_by_ref.status = 'failed'
+                    tx_by_ref.amount = amount_val or tx_by_ref.amount or Decimal('0.00')
+                    tx_by_ref.phone = phone or tx_by_ref.phone
+                    tx_by_ref.save()
+                    logger.info('Marked pending WalletTransaction %s as failed', tx_by_ref.reference)
+                elif user:
+                    WalletTransaction.objects.create(
+                        user=user,
+                        phone=phone,
+                        amount=amount_val or Decimal('0.00'),
+                        type="deposit",
+                        status="failed",
+                        reference=ref
+                    )
+                else:
+                    logger.warning("STK callback received but could not find user for phone %s; skipping WalletTransaction creation", phone)
+            except Exception as e:
+                logger.exception("Error recording failed STK callback: %s", e)
 
     except Exception as e:
-        print("Callback Error:", e)
+        logger.exception("Callback Error: %s", e)
 
     return Response({"Result": "Callback received"})
 
@@ -523,6 +728,19 @@ def withdraw_from_wallet(request):
     phone = request.data.get("phone")
     amount_str = request.data.get("amount")  
     pin = request.data.get("pin")
+
+    # Debug: log auth header and user for troubleshooting 401s
+    try:
+        auth_header = request.META.get('HTTP_AUTHORIZATION')
+        logger.info(f"Withdraw called. Authorization header: {auth_header}")
+        logger.info(f"Request user: {getattr(request, 'user', None)} | authenticated: {getattr(request, 'user', None).is_authenticated if getattr(request, 'user', None) else 'N/A'}")
+    except Exception as e:
+        logger.exception("Error logging auth info for withdraw")
+    try:
+        print("[WITHDRAW] HTTP_AUTHORIZATION:", request.META.get('HTTP_AUTHORIZATION'))
+        print("[WITHDRAW] request.user:", getattr(request, 'user', None), "authenticated:", getattr(request.user, 'is_authenticated', False))
+    except Exception as e:
+        print("[WITHDRAW] Error printing auth info:", e)
 
     if not pin:
         return Response({"error": "PIN required for withdrawal"}, status=400)

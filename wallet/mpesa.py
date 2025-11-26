@@ -1,12 +1,28 @@
 import requests
 import base64
+import logging
 from datetime import datetime
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
+
 def generate_access_token():
     url = f"{settings.MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials"
-    response = requests.get(url, auth=(settings.MPESA_CONSUMER_KEY, settings.MPESA_CONSUMER_SECRET))
-    return response.json()['access_token']
+    try:
+        response = requests.get(url, auth=(settings.MPESA_CONSUMER_KEY, settings.MPESA_CONSUMER_SECRET), timeout=10)
+        logger.info("MPesa token request: %s - status %s", url, response.status_code)
+        data = response.json()
+        if response.status_code != 200:
+            logger.warning("Failed to get access token: %s", data)
+            return None
+        token = data.get('access_token')
+        if not token:
+            logger.warning("No access_token in response: %s", data)
+            return None
+        return token
+    except Exception as e:
+        logger.exception("Error generating M-Pesa access token: %s", e)
+        return None
 
 
 def generate_password():
@@ -18,6 +34,9 @@ def generate_password():
 
 def stk_push(phone, amount, account_reference="Wallet Deposit"):
     token = generate_access_token()
+    if not token:
+        return {"error": "Failed to generate access token"}
+
     password, timestamp = generate_password()
 
     url = f"{settings.MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest"
@@ -38,8 +57,25 @@ def stk_push(phone, amount, account_reference="Wallet Deposit"):
         "TransactionDesc": "Wallet Funding"
     }
 
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    try:
+        logger.info("STK push payload: %s", payload)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        logger.info("STK push response status: %s", response.status_code)
+        try:
+            data = response.json()
+        except ValueError:
+            data = {"error": "Invalid JSON in STK response", "text": response.text}
+            logger.warning("Invalid JSON response from STK push: %s", response.text)
+        logger.info("STK push response body: %s", data)
+
+        # Return the parsed response or an error wrapper
+        if response.status_code not in (200, 201):
+            return {"error": "STK push failed", "status": response.status_code, "response": data}
+
+        return data
+    except requests.exceptions.RequestException as e:
+        logger.exception("STK push request exception: %s", e)
+        return {"error": str(e)}
 
 #--- M-Pesa Withdrawal ---
 def mpesa_withdraw(phone, amount):

@@ -31,7 +31,24 @@ SECRET_KEY = 'django-insecure-0!3h&zk1+z0$q^$^xz0%#mdw6p^+*==x7)k*@!szvt5=%15e6o
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# Hosts allowed to connect. For development we'll include localhost and
+# the host extracted from `MPESA_CALLBACK_URL` (useful when using ngrok).
+raw_allowed = os.getenv("ALLOWED_HOSTS")
+if raw_allowed:
+    ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(",") if h.strip()]
+else:
+    ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+# If MPESA_CALLBACK_URL is set, parse and allow its hostname (ngrok host)
+mpesa_cb = os.getenv("MPESA_CALLBACK_URL")
+if mpesa_cb:
+    try:
+        parsed = urlparse(mpesa_cb)
+        if parsed.hostname and parsed.hostname not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(parsed.hostname)
+    except Exception:
+        # keep ALLOWED_HOSTS as-is if parsing fails
+        pass
 
 # SIMPLE JWT CONFIGURATION
 SIMPLE_JWT = {
