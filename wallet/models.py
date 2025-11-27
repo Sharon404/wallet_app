@@ -135,3 +135,12 @@ class WalletTransaction(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.type} - {self.amount}"
+   
+    
+#  M-Pesa STK Push
+class MpesaSTKRequest(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    checkout_request_id = models.CharField(max_length=100, unique=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    phone = models.CharField(max_length=20, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)   
