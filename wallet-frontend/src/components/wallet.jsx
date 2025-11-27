@@ -269,8 +269,53 @@ const WalletHome = () => {
       setMpesaDepositPhone("");
       setMpesaDepositAmount("");
       
-      // Refresh balance after 5 seconds (callback may take time)
-      setTimeout(() => fetchTransactions(), 5000);
+      // Start short-polling for the STK completion status using the server
+      // status endpoint so the UI updates immediately when the callback
+      // is processed. We'll poll for a short window then stop.
+      const checkoutRef = res.data?.CheckoutRequestID || res.data?.MerchantRequestID;
+
+      if (checkoutRef) {
+        let attempts = 0;
+        const maxAttempts = 15; // ~30 seconds with 2s interval
+        const intervalMs = 2000;
+
+        const pollStatus = async () => {
+          try {
+            const token = localStorage.getItem("access_token");
+            const statusRes = await axios.get("/mpesa/stk/status/", {
+              params: { reference: checkoutRef },
+              headers: { Authorization: `Bearer ${token}` },
+            });
+
+            const s = statusRes.data?.status;
+            if (s === "success") {
+              setMpesaDepositMessage("Deposit successful — your wallet has been credited.");
+              await fetchTransactions();
+              return;
+            }
+
+            if (s === "failed") {
+              setMpesaDepositMessage("M-Pesa payment failed.");
+              return;
+            }
+
+            // unknown / still pending
+            attempts += 1;
+            if (attempts < maxAttempts) setTimeout(pollStatus, intervalMs);
+            else setMpesaDepositMessage("Payment still pending. We'll update when it completes.");
+          } catch (err) {
+            attempts += 1;
+            if (attempts < maxAttempts) setTimeout(pollStatus, intervalMs);
+            else setMpesaDepositMessage("Error checking payment status — please refresh later.");
+          }
+        };
+
+        // Wait 2s then start the first check (callback usually arrives quickly)
+        setTimeout(pollStatus, 2000);
+      } else {
+        // fallback single refresh attempt
+        setTimeout(() => fetchTransactions(), 5000);
+      }
     } catch (err) {
       setMpesaDepositMessage(err.response?.data?.error || "M-Pesa deposit failed.");
     }

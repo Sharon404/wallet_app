@@ -702,29 +702,31 @@ def mpesa_callback(request):
         # ---------- PROCESS SUCCESS ----------
         if result_code == 0 and amount_val is not None:
             try:
-                wallet, _ = Wallet.objects.get_or_create(user=user)
-                wallet.balance += Decimal(amount_val)
-                wallet.save()
+                # Ensure wallet + transaction are updated atomically so the UI can rely
+                # on a consistent state when polling status endpoints.
+                with transaction.atomic():
+                    wallet, _ = Wallet.objects.get_or_create(user=user)
+                    wallet.balance += Decimal(amount_val)
+                    wallet.save()
 
-                if tx_by_ref:
-                    tx_by_ref.status = 'success'
-                    tx_by_ref.amount = amount_val if (tx_by_ref.amount is None) else tx_by_ref.amount
-                    tx_by_ref.phone = phone or tx_by_ref.phone
-                    tx_by_ref.save()
-                    logger.info('Updated existing WalletTransaction %s -> success', tx_by_ref.reference)
-                else:
-                    ref = reference or str(uuid.uuid4())
-                    WalletTransaction.objects.create(
-                        user=user,
-                        phone=phone,
-                        amount=amount_val,
-                        type="deposit",
-                        status="success",
-                        reference=ref
-                    )
+                    if tx_by_ref:
+                        tx_by_ref.status = 'success'
+                        tx_by_ref.amount = amount_val if (tx_by_ref.amount is None) else tx_by_ref.amount
+                        tx_by_ref.phone = phone or tx_by_ref.phone
+                        tx_by_ref.save()
+                        logger.info('Updated existing WalletTransaction %s -> success', tx_by_ref.reference)
+                    else:
+                        ref = reference or str(uuid.uuid4())
+                        WalletTransaction.objects.create(
+                            user=user,
+                            phone=phone,
+                            amount=amount_val,
+                            type="deposit",
+                            status="success",
+                            reference=ref
+                        )
 
                 logger.info(f"Credited {amount_val} to {user}. Wallet new balance: {wallet.balance}")
-
             except Exception as e:
                 logger.exception("Error crediting wallet on STK callback: %s", e)
 
@@ -754,6 +756,49 @@ def mpesa_callback(request):
         logger.exception("Callback Error: %s", e)
 
     return Response({"Result": "Callback received"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_stk_status(request):
+    """Return the status of a WalletTransaction created for a previous STK push.
+
+    Query parameters: reference (CheckoutRequestID / MerchantRequestID)
+
+    This is used by the frontend to poll for the STK completion result so the
+    UI can update immediately without needing the user to logout/login.
+    """
+    reference = request.query_params.get('reference') or request.GET.get('reference')
+    if not reference:
+        return Response({'error': 'reference query parameter is required'}, status=400)
+
+    try:
+        tx = WalletTransaction.objects.filter(reference=reference).order_by('-id').first()
+        # If transaction missing, fall back to STK request mapping to ensure the
+        # requested reference belongs to the current user.
+        if not tx:
+            req = MpesaSTKRequest.objects.filter(checkout_request_id=reference).first()
+            if req and req.user != request.user:
+                return Response({'error': 'forbidden'}, status=403)
+
+            return Response({'status': 'unknown', 'reference': reference})
+
+        if tx.user != request.user:
+            return Response({'error': 'forbidden'}, status=403)
+
+        wallet = Wallet.objects.filter(user=request.user).first()
+
+        return Response({
+            'status': tx.status,
+            'amount': str(tx.amount) if tx.amount is not None else None,
+            'phone': tx.phone,
+            'reference': tx.reference,
+            'wallet_balance': str(wallet.balance) if wallet else None,
+        })
+
+    except Exception as e:
+        logger.exception('Error checking STK status for ref=%s: %s', reference, e)
+        return Response({'error': 'server error'}, status=500)
 
 # ---------------- M-PESA WITHDRAWAL ----------------
 @csrf_exempt
