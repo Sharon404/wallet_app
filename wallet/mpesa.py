@@ -89,14 +89,15 @@ def mpesa_withdraw(phone, amount):
             "InitiatorName": getattr(settings, 'MPESA_B2C_INITIATOR_NAME', 'testapi'),
             "SecurityCredential": getattr(settings, 'MPESA_B2C_SECURITY_CREDENTIAL', 'Safaricom111!'),
             "CommandID": "BusinessPayment",
-            "Amount": amount,
+            "Amount": int(amount),
             "PartyA": getattr(settings, 'MPESA_B2C_SHORTCODE', '600000'),
             "PartyB": phone,
             "Remarks": "Wallet Withdrawal",
-            "QueueTimeOutURL": getattr(settings, 'MPESA_B2C_TIMEOUT_URL', 'https://localhost/mpesa/b2c/timeout/'),
-            "ResultURL": getattr(settings, 'MPESA_B2C_RESULT_URL', 'https://localhost/mpesa/b2c/result/'),
+            "QueueTimeOutURL": getattr(settings, 'MPESA_B2C_TIMEOUT_URL', ' https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/mpesa/b2c/timeout/'),
+            "ResultURL": getattr(settings, 'MPESA_B2C_RESULT_URL', 'https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/mpesa/b2c/result/'),
             "Occasion": "withdrawal"
         }
+        print("B2C Callback payload:", payload)
 
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()

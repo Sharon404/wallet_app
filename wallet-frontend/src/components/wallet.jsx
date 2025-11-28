@@ -345,12 +345,78 @@ const WalletHome = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      setMpesaWithdrawMessage("Withdrawal initiated! Check your M-Pesa messages.");
+      setMpesaWithdrawMessage("Withdrawal initiated — awaiting confirmation from provider.");
       setMpesaWithdrawPhone("");
       setMpesaWithdrawAmount("");
       setMpesaWithdrawPin("");
-      setBalance(parseFloat(res.data.new_balance || balance));
-      fetchTransactions();
+      // Use the server-provided wallet balance (immediate deduction) and
+      // poll for completion status using the reference.
+      setBalance(parseFloat(res.data.wallet_balance || balance));
+      const ref = res.data.reference;
+      if (ref) {
+        let attempts = 0;
+        const maxAttempts = 30; // up to ~60s
+        const intervalMs = 2000;
+
+        const pollWithdraw = async () => {
+          try {
+            const token = localStorage.getItem("access_token");
+            const statusRes = await axios.get("/mpesa/withdraw/status/", {
+              params: { reference: ref },
+              headers: { Authorization: `Bearer ${token}` },
+            });
+
+            const s = statusRes.data?.status;
+            if (s === "success") {
+              setMpesaWithdrawMessage("Withdrawal successful — funds sent.");
+              // refresh transactions and latest balance
+              await fetchTransactions();
+              return;
+            }
+
+            if (s === "failed") {
+              setMpesaWithdrawMessage("Withdrawal failed — refund processed.");
+              await fetchTransactions();
+              return;
+            }
+
+            attempts += 1;
+            if (attempts < maxAttempts) setTimeout(pollWithdraw, intervalMs);
+            else setMpesaWithdrawMessage("Still pending — we'll update when it completes.");
+          } catch (err) {
+            // If unauthorized (token expired), try again without auth in case
+            // the server allows unauthenticated checks for status.
+            const status = err?.response?.status;
+            attempts += 1;
+            if (status === 401 && attempts < maxAttempts) {
+              // try unauthenticated poll once more (server returns limited info)
+              try {
+                const statusRes = await axios.get("/mpesa/withdraw/status/", { params: { reference: ref } });
+                const s2 = statusRes.data?.status;
+                if (s2 === "success") {
+                  setMpesaWithdrawMessage("Withdrawal successful — funds sent.");
+                  await fetchTransactions();
+                  return;
+                }
+                if (s2 === "failed") {
+                  setMpesaWithdrawMessage("Withdrawal failed — refund processed.");
+                  await fetchTransactions();
+                  return;
+                }
+              } catch (_err) {
+                // fall through to retry logic
+              }
+            }
+
+            if (attempts < maxAttempts) setTimeout(pollWithdraw, intervalMs);
+            else setMpesaWithdrawMessage("Error checking withdraw status — refresh later.");
+          }
+        };
+
+        setTimeout(pollWithdraw, 2000);
+      } else {
+        fetchTransactions();
+      }
     } catch (err) {
       setMpesaWithdrawMessage(err.response?.data?.error || "M-Pesa withdrawal failed.");
     }

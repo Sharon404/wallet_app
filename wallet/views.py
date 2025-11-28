@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal,InvalidOperation
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -26,6 +26,8 @@ from .utils import send_activation_email, send_otp
 import random
 from django.shortcuts import redirect 
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.decorators import authentication_classes, permission_classes
 from rest_framework import status
 from .models import CustomUser
 from rest_framework.permissions import IsAuthenticated
@@ -541,6 +543,22 @@ def initiate_stk(request):
                         status='pending',
                         reference=tx_ref
                     )
+                # Create a pending Transaction record so the deposit appears in history
+                try:
+                    wallet_obj, _ = Wallet.objects.get_or_create(user=request.user)
+                    if not Transaction.objects.filter(wallet=wallet_obj, description__icontains=str(tx_ref)).exists():
+                        Transaction.objects.create(
+                            wallet=wallet_obj,
+                            transaction_type='DEPOSIT',
+                            amount=amount_dec or Decimal('0.00'),
+                            currency_from='KES',
+                            currency_to=getattr(wallet_obj, 'currency', 'KES'),
+                            converted_amount=amount_dec or Decimal('0.00'),
+                            status='PENDING',
+                            description=f'M-Pesa deposit reference {tx_ref} initiated'
+                        )
+                except Exception:
+                    logger.exception('Failed to create pending Transaction record for STK ref=%s', tx_ref)
             except Exception as e:
                 logger.exception('Failed to save STK request or pending transaction: %s', e)
     except Exception:
@@ -726,6 +744,32 @@ def mpesa_callback(request):
                             reference=ref
                         )
 
+                # Record Transaction history (avoid duplicate entries for the same MPESA ref)
+                try:
+                    wallet_obj, _ = Wallet.objects.get_or_create(user=user)
+                    t = Transaction.objects.filter(
+                        wallet=wallet_obj,
+                        description__icontains=str(reference)
+                    ).order_by('-id').first()
+                    if t:
+                        t.status = 'SUCCESS'
+                        t.amount = Decimal(amount_val)
+                        t.converted_amount = Decimal(amount_val)
+                        t.save()
+                    else:
+                        Transaction.objects.create(
+                            wallet=wallet_obj,
+                            transaction_type='DEPOSIT',
+                            amount=Decimal(amount_val),
+                            currency_from='KES',
+                            currency_to=getattr(wallet_obj, 'currency', 'KES'),
+                            converted_amount=Decimal(amount_val),
+                            status='SUCCESS',
+                            description=f'M-Pesa deposit reference {reference} receipt {mpesa_receipt or "n/a"}'
+                        )
+                except Exception:
+                    logger.exception('Failed to create Transaction record for successful MPesa deposit ref=%s', reference)
+
                 logger.info(f"Credited {amount_val} to {user}. Wallet new balance: {wallet.balance}")
             except Exception as e:
                 logger.exception("Error crediting wallet on STK callback: %s", e)
@@ -751,6 +795,29 @@ def mpesa_callback(request):
                     )
             except Exception as e:
                 logger.exception("Error recording failed STK callback: %s", e)
+
+                # Also record failed deposit attempt in Transaction history
+                try:
+                    w, _ = Wallet.objects.get_or_create(user=user)
+                    t = Transaction.objects.filter(wallet=w, description__icontains=str(reference)).order_by('-id').first()
+                    if t:
+                        t.status = 'FAILED'
+                        t.amount = Decimal(amount_val or 0)
+                        t.converted_amount = Decimal(amount_val or 0)
+                        t.save()
+                    else:
+                        Transaction.objects.create(
+                            wallet=w,
+                            transaction_type='DEPOSIT',
+                            amount=Decimal(amount_val or 0),
+                            currency_from='KES',
+                            currency_to=getattr(w, 'currency', 'KES'),
+                            converted_amount=Decimal(amount_val or 0),
+                            status='FAILED',
+                            description=f'Failed M-Pesa deposit reference {reference} receipt {mpesa_receipt or "n/a"}'
+                        )
+                except Exception:
+                    logger.exception('Failed to create Transaction record for failed MPesa deposit ref=%s', reference)
 
     except Exception as e:
         logger.exception("Callback Error: %s", e)
@@ -800,13 +867,62 @@ def get_stk_status(request):
         logger.exception('Error checking STK status for ref=%s: %s', reference, e)
         return Response({'error': 'server error'}, status=500)
 
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def get_withdraw_status(request):
+    """Return the status of a withdraw WalletTransaction by our internal reference.
+
+    Query parameter: reference (the UUID returned from withdraw API)
+    """
+    reference = request.query_params.get('reference') or request.GET.get('reference')
+    if not reference:
+        return Response({'error': 'reference query parameter is required'}, status=400)
+
+    try:
+        tx = WalletTransaction.objects.filter(reference=reference).order_by('-id').first()
+        if not tx:
+            return Response({'status': 'unknown', 'reference': reference})
+
+        # If request is authenticated, only the owner may read full details
+        if getattr(request, 'user', None) and request.user.is_authenticated:
+            if tx.user != request.user:
+                return Response({'error': 'forbidden'}, status=403)
+
+            wallet = Wallet.objects.filter(user=request.user).first()
+            return Response({
+                'status': tx.status,
+                'amount': str(tx.amount) if tx.amount is not None else None,
+                'phone': tx.phone,
+                'reference': tx.reference,
+                'wallet_balance': str(wallet.balance) if wallet else None,
+            })
+
+        # Unauthenticated requests get limited info (status, amount, phone, reference)
+        return Response({
+            'status': tx.status,
+            'amount': str(tx.amount) if tx.amount is not None else None,
+            'phone': tx.phone,
+            'reference': tx.reference,
+        })
+
+    except Exception as e:
+        logger.exception('Error checking withdraw status for ref=%s: %s', reference, e)
+        return Response({'error': 'server error'}, status=500)
+
 # ---------------- M-PESA WITHDRAWAL ----------------
 @csrf_exempt
 @api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def withdraw_from_wallet(request):
     phone = request.data.get("phone")
-    amount_str = request.data.get("amount")  
+    amount_str = request.data.get("amount") 
+    amount = int(float(amount_str)) 
     pin = request.data.get("pin")
+
+    print("[WITHDRAW] HTTP_AUTHORIZATION:", request.META.get('HTTP_AUTHORIZATION'))
+    print("[WITHDRAW] request.user:", request.user, "authenticated:", request.user.is_authenticated)
 
     # Debug: log auth header and user for troubleshooting 401s
     try:
@@ -841,6 +957,7 @@ def withdraw_from_wallet(request):
 
     from .mpesa import mpesa_withdraw
     res = mpesa_withdraw(phone, amount)
+    reference = str(uuid.uuid4())
 
     if res.get("ResponseCode") == "0":
         wallet.balance -= amount
@@ -849,38 +966,186 @@ def withdraw_from_wallet(request):
             user=request.user,
             type="withdraw",
             amount=amount,
-            status="pending"   # update via callback
+            status="pending",   # update via callback
+            reference=reference,
         )
+        # Create a pending Transaction record so it appears in the user's
+        # transaction history immediately and can be updated by callback.
+        try:
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='WITHDRAWAL',
+                amount=amount,
+                currency_from=getattr(wallet, 'currency', 'KES'),
+                currency_to=getattr(wallet, 'currency', 'KES'),
+                converted_amount=amount,
+                status='PENDING',
+                description=f'M-Pesa withdraw reference {reference} phone {phone}'
+            )
+        except Exception:
+            logger.exception('Failed to create initial Transaction record for withdraw ref=%s', reference)
+    # Return the provider response plus our internal reference so the frontend
+    # can poll for completion (B2C result) and show an immediate confirmation.
+    payload = {
+        'mpesa_response': res,
+        'reference': reference,
+        'wallet_balance': str(wallet.balance),
+    }
 
-    return Response(res)
+    # If the provider returned success right away, include a friendly message
+    if res.get('ResponseCode') == '0':
+        payload['message'] = 'Withdrawal initiated — awaiting provider confirmation.'
+    else:
+        payload['message'] = 'Withdrawal request failed to start.'
+
+    return Response(payload)
 
 # ---------------- M-PESA B2C RESULT CALLBACK ----------------
 @csrf_exempt
 @api_view(["POST"])
+@permission_classes([AllowAny])
 def mpesa_b2c_result(request):
     result = request.data
 
     try:
-        result_code = result['Result']['ResultCode']
-        phone = result['Result']['ResultParameters']['ResultParameter'][1]['Value']
-        amount = result['Result']['ResultParameters']['ResultParameter'][0]['Value']
+        # Log raw B2C result for troubleshooting
+        logger.info('Raw B2C callback payload: %s', result)
+
+        result_code = result.get('Result', {}).get('ResultCode')
+
+        # Payloads from the provider vary between environments / providers.
+        # Be defensive when extracting phone and amount — try several common
+        # locations, and finally fall back to scanning the payload recursively.
+        def _find_key(d, candidates):
+            if d is None:
+                return None
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    if k in candidates:
+                        return v
+                    rv = _find_key(v, candidates)
+                    if rv is not None:
+                        return rv
+            elif isinstance(d, list):
+                for it in d:
+                    rv = _find_key(it, candidates)
+                    if rv is not None:
+                        return rv
+            return None
+
+        # Look for amount and phone number in common places
+        amount = None
+        if amount is None:
+            amount = _find_key(result.get('Result'), ['Amount', 'TransactionAmount', 'TransAmount', 'Value'])
+            try:
+                if amount is not None:
+                    amount = Decimal(str(amount))  # convert everything to string first
+            except (InvalidOperation, TypeError):
+                logger.error("Invalid amount received from B2C callback: %s", amount)
+                return Response({"error": f"Invalid amount: {amount}"}, status=400)
+
+        phone = None
+
+        # Most providers place ResultParameters -> ResultParameter as a list
+        params = result.get('Result', {}).get('ResultParameters') or result.get('Result', {}).get('ResultParameter')
+        if params and isinstance(params, dict):
+            params = params.get('ResultParameter') or params.get('ResultParameters') or params
+
+        if isinstance(params, list):
+            # common order is Amount first then PhoneNumber second — check by Name
+            for p in params:
+                if isinstance(p, dict):
+                    key_name = p.get('Key') or p.get('Name')
+                    if key_name and 'amount' in str(key_name).lower() and amount is None:
+                        amount = p.get('Value')
+                    if key_name and 'phone' in str(key_name).lower() and phone is None:
+                        phone = p.get('Value')
+                    # also accept MpesaReceiptNumber etc.
+        
+        # fallback: direct keys
+        if amount is None:
+            amount = _find_key(result.get('Result'), ['Amount', 'TransactionAmount', 'TransAmount', 'Value'])
+        if phone is None:
+            phone = _find_key(result.get('Result'), ['PhoneNumber', 'Msisdn', 'PartyB', 'PartyA'])
+
+        # As a last resort, if result contains a nested list 'ResultParameters' etc.
+        try:
+            if amount is None:
+                amount = result['Result']['ResultParameters']['ResultParameter'][0].get('Value')
+        except Exception:
+            pass
+        try:
+            if phone is None:
+                phone = result['Result']['ResultParameters']['ResultParameter'][1].get('Value')
+        except Exception:
+            pass
 
         tx = WalletTransaction.objects.filter(
             type="withdraw", amount=amount, phone=phone
         ).last()
 
-        if result_code == 0:
-            tx.status = "success"
-        else:
-            tx.status = "failed"
-            # refund wallet
-            wallet = Wallet.objects.get(user=tx.user)
-            wallet.balance += tx.amount
-            wallet.save()
+        if not tx:
+            logger.warning('B2C callback: no matching WalletTransaction found for phone=%s amount=%s', phone, amount)
 
-        tx.save()
+        if tx:
+            if result_code == 0:
+                tx.status = "success"
+                # Update any existing Transaction history record (created at initiation)
+                try:
+                    w = Wallet.objects.filter(user=tx.user).first()
+                    if w:
+                        t = Transaction.objects.filter(wallet=w, description__icontains=str(tx.reference)).order_by('-id').first()
+                        if t:
+                            t.status = 'SUCCESS'
+                            t.save()
+                        else:
+                            Transaction.objects.create(
+                                wallet=w,
+                                transaction_type='WITHDRAWAL',
+                                amount=Decimal(tx.amount),
+                                currency_from=getattr(w, 'currency', 'KES'),
+                                currency_to=getattr(w, 'currency', 'KES'),
+                                converted_amount=Decimal(tx.amount),
+                                status='SUCCESS',
+                                description=f'M-Pesa withdraw reference {tx.reference} phone {phone}'
+                            )
+                except Exception:
+                    logger.exception('Failed to create/update Transaction record for successful withdraw tx=%s', tx.id)
+            else:
+                tx.status = "failed"
+                # refund wallet
+                try:
+                    wallet = Wallet.objects.get(user=tx.user)
+                    wallet.balance += tx.amount
+                    wallet.save()
+                except Exception:
+                    logger.exception('Failed to refund wallet for tx %s', tx.id)
+
+                # Record or update failed withdrawal in Transaction history
+                try:
+                    w = Wallet.objects.filter(user=tx.user).first()
+                    if w:
+                        t = Transaction.objects.filter(wallet=w, description__icontains=str(tx.reference)).order_by('-id').first()
+                        if t:
+                            t.status = 'FAILED'
+                            t.save()
+                        else:
+                            Transaction.objects.create(
+                                wallet=w,
+                                transaction_type='WITHDRAWAL',
+                                amount=Decimal(tx.amount),
+                                currency_from=getattr(w, 'currency', 'KES'),
+                                currency_to=getattr(w, 'currency', 'KES'),
+                                converted_amount=Decimal(tx.amount),
+                                status='FAILED',
+                                description=f'Failed M-Pesa withdraw reference {tx.reference} phone {phone}'
+                            )
+                except Exception:
+                    logger.exception('Failed to create Transaction record for failed withdraw tx=%s', tx.id)
+
+            tx.save()
 
     except Exception as e:
-        print("B2C Callback Error:", e)
+        logger.exception("B2C Callback Error: %s", e)
 
     return Response({"Result": "Received"})

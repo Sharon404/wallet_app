@@ -17,6 +17,8 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from wallet.dashboard_admin import dashboard_admin_site 
+from wallet.views import mpesa_b2c_result
+from rest_framework.response import Response as DRFResponse
 from django.http import HttpResponseRedirect
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -29,6 +31,11 @@ urlpatterns = [
    # path('admin/', admin.site.urls),
     # Redirect root URL to the API index so visiting '/' doesn't 404.
     path('', lambda request: HttpResponseRedirect('/api/')),
+    # Support M-Pesa callbacks that POST to the root (no /api prefix). Some
+    # providers (or test setups using ngrok) send callbacks to `/mpesa/...`.
+    # Map those root paths directly to the same views so callbacks don't 404.
+    path('mpesa/b2c/result/', mpesa_b2c_result),
+    path('mpesa/b2c/timeout/', lambda r: DRFResponse({"status": "timeout"})),
     # Include the app's URLs. The app lives at the project root as `wallet`.
     path('api/', include('wallet.urls')),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
