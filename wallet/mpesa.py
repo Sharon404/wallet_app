@@ -93,8 +93,8 @@ def mpesa_withdraw(phone, amount):
             "PartyA": getattr(settings, 'MPESA_B2C_SHORTCODE', '600000'),
             "PartyB": phone,
             "Remarks": "Wallet Withdrawal",
-            "QueueTimeOutURL": getattr(settings, 'MPESA_B2C_TIMEOUT_URL', ' https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/mpesa/b2c/timeout/'),
-            "ResultURL": getattr(settings, 'MPESA_B2C_RESULT_URL', 'https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/mpesa/b2c/result/'),
+            "QueueTimeOutURL": getattr(settings, 'MPESA_B2C_TIMEOUT_URL', 'https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/api/mpesa/b2c/timeout/'),
+            "ResultURL": getattr(settings, 'MPESA_B2C_RESULT_URL', 'https://dierdre-nondialyzing-asthmatically.ngrok-free.dev/api/mpesa/b2c/result/'),
             "Occasion": "withdrawal"
         }
         print("B2C Callback payload:", payload)

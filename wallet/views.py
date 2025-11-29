@@ -1013,6 +1013,16 @@ def mpesa_b2c_result(request):
 
         result_code = result.get('Result', {}).get('ResultCode')
 
+        # Many sandbox/provider HTTP callbacks will first post an acknowledgement
+        # or the original request body (not the final Result) to the ResultURL.
+        # These ack payloads do not contain a 'Result' block. When we detect an
+        # ack-like payload we should return 200 immediately so the provider
+        # doesn't keep retrying. Examples include a body with InitiatorName,
+        # CommandID, PartyA/PartyB, ResultURL or Amount at top level.
+        if 'Result' not in result:
+            logger.info('B2C callback appears to be an acknowledgement (no Result). Returning 200: %s', result)
+            return Response({'Result': 'Acknowledged'})
+
         # Payloads from the provider vary between environments / providers.
         # Be defensive when extracting phone and amount — try several common
         # locations, and finally fall back to scanning the payload recursively.
@@ -1037,12 +1047,6 @@ def mpesa_b2c_result(request):
         amount = None
         if amount is None:
             amount = _find_key(result.get('Result'), ['Amount', 'TransactionAmount', 'TransAmount', 'Value'])
-            try:
-                if amount is not None:
-                    amount = Decimal(str(amount))  # convert everything to string first
-            except (InvalidOperation, TypeError):
-                logger.error("Invalid amount received from B2C callback: %s", amount)
-                return Response({"error": f"Invalid amount: {amount}"}, status=400)
 
         phone = None
 
@@ -1080,9 +1084,39 @@ def mpesa_b2c_result(request):
         except Exception:
             pass
 
-        tx = WalletTransaction.objects.filter(
-            type="withdraw", amount=amount, phone=phone
-        ).last()
+        # Ensure amount is numeric — if not, just acknowledge to avoid triggering
+        # provider retries (sandbox sometimes posts unexpected values).
+        if amount is None:
+            logger.warning('B2C callback missing amount — treating as acknowledgement: %s', result)
+            return Response({'Result': 'Acknowledged'})
+
+        try:
+            amount_val = Decimal(str(amount))
+        except Exception:
+            logger.error('Invalid amount received from B2C callback: %s', amount)
+            return Response({'Result': 'Acknowledged'})
+
+        # Normalize phone
+        phone_val = None
+        if phone is not None:
+            try:
+                phone_val = ''.join(ch for ch in str(phone) if ch.isdigit())
+            except Exception:
+                phone_val = None
+
+        # Try to find a matching pending withdraw. Try most specific -> broad
+        tx = None
+        # Exact match amount + phone
+        if phone_val:
+            tx = WalletTransaction.objects.filter(type='withdraw', amount=amount_val, phone__endswith=phone_val).last()
+
+        # Fallback: pending by phone
+        if not tx and phone_val:
+            tx = WalletTransaction.objects.filter(type='withdraw', phone__endswith=phone_val, status='pending').order_by('-timestamp').first()
+
+        # Fallback: pending by amount only
+        if not tx:
+            tx = WalletTransaction.objects.filter(type='withdraw', amount=amount_val, status='pending').order_by('-timestamp').first()
 
         if not tx:
             logger.warning('B2C callback: no matching WalletTransaction found for phone=%s amount=%s', phone, amount)
