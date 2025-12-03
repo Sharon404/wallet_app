@@ -78,6 +78,12 @@ MPESA_B2C_SHORTCODE = os.getenv("MPESA_B2C_SHORTCODE")
 MPESA_B2C_RESULT_URL = os.getenv("MPESA_B2C_RESULT_URL")
 MPESA_B2C_TIMEOUT_URL = os.getenv("MPESA_B2C_TIMEOUT_URL")
 
+# Flutterwave Settings
+FLW_SECRET_KEY = os.getenv("FLW_SECRET_KEY")
+FLW_BASE_URL = os.getenv("FLW_BASE_URL", "https://api.flutterwave.com/v3")
+FLW_REDIRECT_URL = os.getenv("FLW_REDIRECT_URL", "http://localhost:8000/api/flutterwave/callback/")
+FLW_WEBHOOK_SECRET = os.getenv("FLW_WEBHOOK_SECRET")
+
 # Application definition
 
 INSTALLED_APPS = [

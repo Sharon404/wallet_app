@@ -43,6 +43,13 @@ const WalletHome = () => {
   const [mpesaWithdrawMessage, setMpesaWithdrawMessage] = useState("");
   const [mpesaWithdrawPin, setMpesaWithdrawPin] = useState("");
 
+  // Flutterwave Deposit
+  const [showFlwDeposit, setShowFlwDeposit] = useState(false);
+  const [flwDepositAmount, setFlwDepositAmount] = useState("");
+  const [flwDepositMessage, setFlwDepositMessage] = useState("");
+
+
+
   useEffect(() => {
     const token = localStorage.getItem("access_token");
     if (!token) return navigate("/login");
@@ -422,6 +429,36 @@ const WalletHome = () => {
     }
   };
 
+  // Flutterwave Deposit Handler
+const handleFlutterwaveDeposit = async () => {
+  const amount = parseFloat(flwDepositAmount);
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return alert("Enter a valid deposit amount.");
+  }
+
+  try {
+    const token = localStorage.getItem("access_token");
+    const res = await axios.post(
+      "/flutterwave/deposit/",
+      { amount },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    const checkoutUrl = res.data?.checkout_url;
+    if (!checkoutUrl) return alert("Could not get Flutterwave payment link.");
+
+    setFlwDepositMessage("Redirecting to Flutterwave checkout...");
+    window.open(checkoutUrl, "_blank");
+
+    // reset amount
+    setFlwDepositAmount("");
+  } catch (err) {
+    setFlwDepositMessage(err.response?.data?.error || "Flutterwave deposit failed.");
+  }
+};
+
+
+
   if (loading) return <p style={{ textAlign: "center" }}>Loading wallet...</p>;
 
   return (
@@ -508,6 +545,33 @@ const WalletHome = () => {
               Initiate Withdrawal
             </button>
             {mpesaWithdrawMessage && <p style={{ color: mpesaWithdrawMessage.includes("Error") ? "red" : "green", marginTop: 8 }}>{mpesaWithdrawMessage}</p>}
+          </div>
+        )}
+
+        <button
+        style={{ ...styles.button, backgroundColor: "#007bff", marginTop: 10 }} 
+        onClick={() => setShowFlwDeposit(!showFlwDeposit)}
+        >
+        Deposit via Flutterwave
+        </button>
+
+        {showFlwDeposit && (
+          <div style={{ background: "#f1f9ff", padding: 15, borderRadius: 8, marginTop: 10 }}>
+            <h4>Flutterwave Deposit</h4>
+            <input
+              type="number"
+              placeholder={`Amount (${walletCurrency})`}
+              value={flwDepositAmount}
+              onChange={(e) => setFlwDepositAmount(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <button 
+              onClick={handleFlutterwaveDeposit} 
+              style={{ ...styles.button, width: "100%" }}
+            >
+              Proceed to Pay
+            </button>
+            {flwDepositMessage && <p style={{ color: "blue", marginTop: 8 }}>{flwDepositMessage}</p>}
           </div>
         )}
 

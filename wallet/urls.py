@@ -1,5 +1,6 @@
 from django.urls import path
 from rest_framework.response import Response
+from .webhook import flutterwave_webhook
 from .views import (
     WalletView,
     DepositView,
@@ -17,6 +18,8 @@ from .views import (
     mpesa_callback,
     withdraw_from_wallet,
     mpesa_b2c_result,
+    flutterwave_deposit,
+    flutterwave_callback,
 )
 
 urlpatterns = [
@@ -37,6 +40,10 @@ urlpatterns = [
     path('mpesa/withdraw/', withdraw_from_wallet , name='mpesa_withdraw'),
     path("mpesa/b2c/result/", mpesa_b2c_result, name='mpesa_b2c_result'),
     path("mpesa/b2c/timeout/", lambda r: Response({"status": "timeout"}), name='mpesa_b2c_timeout'),
+    path("flutterwave/deposit/", flutterwave_deposit, name='flutterwave_deposit'),
+    path("flutterwave/callback/", flutterwave_callback, name='flutterwave_callback'),
+    path("flutterwave/webhook/", flutterwave_webhook, name='flutterwave_webhook'),
+
 
 
     # Authentication endpoints

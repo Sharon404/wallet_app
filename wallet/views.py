@@ -2,7 +2,7 @@ from decimal import Decimal,InvalidOperation
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes, parser_classes
 from django.views.decorators.csrf import csrf_exempt
 import logging
 from django.contrib.auth import get_user_model, authenticate
@@ -27,7 +27,6 @@ import random
 from django.shortcuts import redirect 
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.decorators import authentication_classes, permission_classes
 from rest_framework import status
 from .models import CustomUser
 from rest_framework.permissions import IsAuthenticated
@@ -39,6 +38,9 @@ from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import parser_classes
 import json
+import hashlib, hmac
+from wallet.flutterwave import create_beneficiary, initiate_transfer
+
 
 
 
@@ -1103,3 +1105,64 @@ def mpesa_b2c_result(request):
         logger.exception("B2C Callback Fatal Error: %s", e)
 
     return Response({"Result": "Received"})
+
+
+# ---------------- FLUTTERWAVE DEPOSIT INITIATION ----------------
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def flutterwave_deposit(request):
+    from .flutterwave import flutterwave_initialize_deposit
+
+    amount = request.data.get("amount")
+    if not amount:
+        return Response({"error": "Amount required"}, status=400)
+
+    flw = flutterwave_initialize_deposit(
+        amount=amount,
+        email=request.user.email,
+        phone = request.data.get("phone"),
+        user_id=request.user.id
+    )
+
+    payment_link = flw["data"]["link"]
+
+    # Save a pending wallet transaction
+    WalletTransaction.objects.create(
+        user=request.user,
+        type="deposit",
+        amount=amount,
+        reference=flw["data"]["tx_ref"],
+        status="pending"
+    )
+
+    return Response({"payment_link": payment_link})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def flutterwave_callback(request):
+    """
+    Minimal callback/redirect handler for Flutterwave.
+
+    Flutterwave will redirect the payer back to `FLW_REDIRECT_URL` after
+    payment. This endpoint accepts a `tx_ref` (query param or POST data)
+    and returns basic status information about the pending WalletTransaction.
+    The authoritative webhook that updates transaction status is handled
+    by `flutterwave_webhook` in `wallet/webhook.py`.
+    """
+    try:
+        tx_ref = request.GET.get('tx_ref') or request.data.get('tx_ref') if hasattr(request, 'data') else None
+    except Exception:
+        tx_ref = None
+
+    if not tx_ref:
+        return Response({'error': 'tx_ref query parameter is required'}, status=400)
+
+    # Try to find a pending WalletTransaction created at initialization
+    tx = WalletTransaction.objects.filter(reference=tx_ref).first()
+
+    if not tx:
+        return Response({'status': 'unknown', 'tx_ref': tx_ref})
+
+    return Response({'status': tx.status, 'tx_ref': tx_ref, 'amount': str(tx.amount), 'user_id': tx.user.id})
