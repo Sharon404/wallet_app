@@ -35,6 +35,12 @@ from rest_framework.permissions import AllowAny
 from django.db import transaction
 from .utils import convert_currency
 from .models import MpesaSTKRequest
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import parser_classes
+import json
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -1000,186 +1006,100 @@ def withdraw_from_wallet(request):
 
     return Response(payload)
 
+
 # ---------------- M-PESA B2C RESULT CALLBACK ----------------
 @csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@parser_classes([JSONParser, FormParser, MultiPartParser])
 def mpesa_b2c_result(request):
-    result = request.data
+    result = request.data or json.loads(request.body.decode() or '{}')
+    if "Result" not in result:
+        return Response({"status": "ACK received"})
+    logger.info("RAW B2C CALLBACK: %s", result)
 
     try:
-        # Log raw B2C result for troubleshooting
-        logger.info('Raw B2C callback payload: %s', result)
+        # If this is a preliminary acknowledgement, return 200
+        if "Result" not in result:
+            logger.info("ACK callback received, returning 200.")
+            return Response({"Result": "Acknowledged"})
 
-        result_code = result.get('Result', {}).get('ResultCode')
+        result_obj = result.get("Result", {})
+        result_code = result_obj.get("ResultCode", None)
+        params_list = (
+            result_obj.get("ResultParameters", {})
+            .get("ResultParameter", [])
+        )
 
-        # Many sandbox/provider HTTP callbacks will first post an acknowledgement
-        # or the original request body (not the final Result) to the ResultURL.
-        # These ack payloads do not contain a 'Result' block. When we detect an
-        # ack-like payload we should return 200 immediately so the provider
-        # doesn't keep retrying. Examples include a body with InitiatorName,
-        # CommandID, PartyA/PartyB, ResultURL or Amount at top level.
-        if 'Result' not in result:
-            logger.info('B2C callback appears to be an acknowledgement (no Result). Returning 200: %s', result)
-            return Response({'Result': 'Acknowledged'})
+        # Clean parsing of parameters
+        params = {p.get("Key"): p.get("Value") for p in params_list if isinstance(p, dict)}
+        logger.info("Parsed parameters: %s", params)
 
-        # Payloads from the provider vary between environments / providers.
-        # Be defensive when extracting phone and amount — try several common
-        # locations, and finally fall back to scanning the payload recursively.
-        def _find_key(d, candidates):
-            if d is None:
-                return None
-            if isinstance(d, dict):
-                for k, v in d.items():
-                    if k in candidates:
-                        return v
-                    rv = _find_key(v, candidates)
-                    if rv is not None:
-                        return rv
-            elif isinstance(d, list):
-                for it in d:
-                    rv = _find_key(it, candidates)
-                    if rv is not None:
-                        return rv
-            return None
+        # Extract amount correctly
+        amount = (
+            params.get("TransactionAmount") or
+            params.get("Amount")
+        )
 
-        # Look for amount and phone number in common places
-        amount = None
-        if amount is None:
-            amount = _find_key(result.get('Result'), ['Amount', 'TransactionAmount', 'TransAmount', 'Value'])
+        receipt = params.get("TransactionReceipt")
+        receiver_info = params.get("ReceiverPartyPublicName")
 
-        phone = None
-
-        # Most providers place ResultParameters -> ResultParameter as a list
-        params = result.get('Result', {}).get('ResultParameters') or result.get('Result', {}).get('ResultParameter')
-        if params and isinstance(params, dict):
-            params = params.get('ResultParameter') or params.get('ResultParameters') or params
-
-        if isinstance(params, list):
-            # common order is Amount first then PhoneNumber second — check by Name
-            for p in params:
-                if isinstance(p, dict):
-                    key_name = p.get('Key') or p.get('Name')
-                    if key_name and 'amount' in str(key_name).lower() and amount is None:
-                        amount = p.get('Value')
-                    if key_name and 'phone' in str(key_name).lower() and phone is None:
-                        phone = p.get('Value')
-                    # also accept MpesaReceiptNumber etc.
-        
-        # fallback: direct keys
-        if amount is None:
-            amount = _find_key(result.get('Result'), ['Amount', 'TransactionAmount', 'TransAmount', 'Value'])
-        if phone is None:
-            phone = _find_key(result.get('Result'), ['PhoneNumber', 'Msisdn', 'PartyB', 'PartyA'])
-
-        # As a last resort, if result contains a nested list 'ResultParameters' etc.
-        try:
-            if amount is None:
-                amount = result['Result']['ResultParameters']['ResultParameter'][0].get('Value')
-        except Exception:
-            pass
-        try:
-            if phone is None:
-                phone = result['Result']['ResultParameters']['ResultParameter'][1].get('Value')
-        except Exception:
-            pass
-
-        # Ensure amount is numeric — if not, just acknowledge to avoid triggering
-        # provider retries (sandbox sometimes posts unexpected values).
-        if amount is None:
-            logger.warning('B2C callback missing amount — treating as acknowledgement: %s', result)
-            return Response({'Result': 'Acknowledged'})
+        if not amount:
+            logger.warning("No amount found in B2C callback. Params: %s", params)
+            return Response({"Result": "Acknowledged"})
 
         try:
             amount_val = Decimal(str(amount))
         except Exception:
-            logger.error('Invalid amount received from B2C callback: %s', amount)
-            return Response({'Result': 'Acknowledged'})
+            logger.error("Amount is not numeric: %s", amount)
+            return Response({"Result": "Acknowledged"})
 
-        # Normalize phone
+        # Extract phone safely
         phone_val = None
-        if phone is not None:
-            try:
-                phone_val = ''.join(ch for ch in str(phone) if ch.isdigit())
-            except Exception:
-                phone_val = None
+        if receiver_info:
+            # Format: "254700123456 - John Doe"
+            phone_val = ''.join(ch for ch in receiver_info if ch.isdigit())
 
-        # Try to find a matching pending withdraw. Try most specific -> broad
+        # --------------- MATCH WALLET TRANSACTION ------------------
         tx = None
-        # Exact match amount + phone
+
         if phone_val:
-            tx = WalletTransaction.objects.filter(type='withdraw', amount=amount_val, phone__endswith=phone_val).last()
+            tx = WalletTransaction.objects.filter(
+                type="withdraw",
+                amount=amount_val,
+                phone__endswith=phone_val
+            ).last()
 
-        # Fallback: pending by phone
         if not tx and phone_val:
-            tx = WalletTransaction.objects.filter(type='withdraw', phone__endswith=phone_val, status='pending').order_by('-timestamp').first()
+            tx = WalletTransaction.objects.filter(
+                type="withdraw",
+                phone__endswith=phone_val,
+                status="pending"
+            ).last()
 
-        # Fallback: pending by amount only
         if not tx:
-            tx = WalletTransaction.objects.filter(type='withdraw', amount=amount_val, status='pending').order_by('-timestamp').first()
+            tx = WalletTransaction.objects.filter(
+                type="withdraw",
+                amount=amount_val,
+                status="pending"
+            ).last()
 
         if not tx:
-            logger.warning('B2C callback: no matching WalletTransaction found for phone=%s amount=%s', phone, amount)
+            logger.warning("No matching withdrawal for phone=%s amount=%s", phone_val, amount_val)
+            return Response({"Result": "Received"})
 
-        if tx:
-            if result_code == 0:
-                tx.status = "success"
-                # Update any existing Transaction history record (created at initiation)
-                try:
-                    w = Wallet.objects.filter(user=tx.user).first()
-                    if w:
-                        t = Transaction.objects.filter(wallet=w, description__icontains=str(tx.reference)).order_by('-id').first()
-                        if t:
-                            t.status = 'SUCCESS'
-                            t.save()
-                        else:
-                            Transaction.objects.create(
-                                wallet=w,
-                                transaction_type='WITHDRAWAL',
-                                amount=Decimal(tx.amount),
-                                currency_from=getattr(w, 'currency', 'KES'),
-                                currency_to=getattr(w, 'currency', 'KES'),
-                                converted_amount=Decimal(tx.amount),
-                                status='SUCCESS',
-                                description=f'M-Pesa withdraw reference {tx.reference} phone {phone}'
-                            )
-                except Exception:
-                    logger.exception('Failed to create/update Transaction record for successful withdraw tx=%s', tx.id)
-            else:
-                tx.status = "failed"
-                # refund wallet
-                try:
-                    wallet = Wallet.objects.get(user=tx.user)
-                    wallet.balance += tx.amount
-                    wallet.save()
-                except Exception:
-                    logger.exception('Failed to refund wallet for tx %s', tx.id)
+        # ---------------- HANDLE SUCCESS / FAILURE ----------------
+        if result_code == 0:
+            tx.status = "success"
+        else:
+            tx.status = "failed"
+            wallet = Wallet.objects.get(user=tx.user)
+            wallet.balance += tx.amount
+            wallet.save()
 
-                # Record or update failed withdrawal in Transaction history
-                try:
-                    w = Wallet.objects.filter(user=tx.user).first()
-                    if w:
-                        t = Transaction.objects.filter(wallet=w, description__icontains=str(tx.reference)).order_by('-id').first()
-                        if t:
-                            t.status = 'FAILED'
-                            t.save()
-                        else:
-                            Transaction.objects.create(
-                                wallet=w,
-                                transaction_type='WITHDRAWAL',
-                                amount=Decimal(tx.amount),
-                                currency_from=getattr(w, 'currency', 'KES'),
-                                currency_to=getattr(w, 'currency', 'KES'),
-                                converted_amount=Decimal(tx.amount),
-                                status='FAILED',
-                                description=f'Failed M-Pesa withdraw reference {tx.reference} phone {phone}'
-                            )
-                except Exception:
-                    logger.exception('Failed to create Transaction record for failed withdraw tx=%s', tx.id)
-
-            tx.save()
+        tx.save()
 
     except Exception as e:
-        logger.exception("B2C Callback Error: %s", e)
+        logger.exception("B2C Callback Fatal Error: %s", e)
 
     return Response({"Result": "Received"})
