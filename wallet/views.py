@@ -1121,21 +1121,26 @@ def flutterwave_deposit(request):
         amount=amount,
         email=request.user.email,
         phone = request.data.get("phone"),
-        user_id=request.user.id
+        name = request.user.get_full_name()
     )
+    print("FLW RESPONSE:", flw)
 
-    payment_link = flw["data"]["link"]
+    if flw.get("status") != "success" or not flw.get("data"):
+        return Response({"error": flw.get("message", "Failed to initialize payment")}, status=400)
 
-    # Save a pending wallet transaction
+    data = flw["data"]
+
     WalletTransaction.objects.create(
         user=request.user,
         type="deposit",
-        amount=amount,
-        reference=flw["data"]["tx_ref"],
+        amount=Decimal(str(amount)),
+        reference=flw["tx_ref"],
         status="pending"
-    )
+)
 
-    return Response({"payment_link": payment_link})
+    return Response({"payment_link": data["link"]})
+
+
 
 
 @api_view(["GET", "POST"])

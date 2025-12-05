@@ -11,8 +11,9 @@ FLW_BASE = "https://api.flutterwave.com/v3"
 # ------------------------------------------------------------
 # 1. Create Flutterwave Payment (for Card/Mpesa deposits)
 # ------------------------------------------------------------
-def flutterwave_initialize_deposit(amount, email, phone, tx_ref=None, redirect_url=None):
+def flutterwave_initialize_deposit(amount, email, phone, name="", tx_ref=None, redirect_url=None):
     tx_ref = tx_ref or str(uuid.uuid4())
+
     payload = {
         "tx_ref": tx_ref,
         "amount": str(amount),
@@ -21,7 +22,7 @@ def flutterwave_initialize_deposit(amount, email, phone, tx_ref=None, redirect_u
         "customer": {
             "email": email,
             "phonenumber": phone,
-            "name": ""
+            "name": name or "Customer"
         },
         "meta": {"integration": "wallet_app"},
         "customizations": {"title": "Wallet deposit"}
@@ -30,8 +31,12 @@ def flutterwave_initialize_deposit(amount, email, phone, tx_ref=None, redirect_u
     headers = {"Authorization": f"Bearer {FLW_SECRET}"}
     resp = requests.post(f"{FLW_BASE}/payments", json=payload, headers=headers, timeout=30)
     resp.raise_for_status()
-    return resp.json()
 
+    data = resp.json()
+
+    data["tx_ref"] = tx_ref
+
+    return data
 
 
 # ------------------------------------------------------------
