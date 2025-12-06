@@ -39,7 +39,12 @@ def flutterwave_webhook(request):
         data = request.data or json.loads(raw_body or '{}')
         tx_data = data.get("data", {})
 
-        tx_ref = tx_data.get("tx_ref")
+        tx_ref = (
+            tx_data.get("tx_ref") 
+            or tx_data.get("txRef")
+            or data.get("tx_ref")
+            or data.get("txRef")
+        )
         status = tx_data.get("status")
         amount = tx_data.get("amount")
         currency = tx_data.get("currency")

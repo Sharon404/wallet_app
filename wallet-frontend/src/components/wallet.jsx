@@ -444,7 +444,7 @@ const handleFlutterwaveDeposit = async () => {
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
-    const checkoutUrl = res.data?.checkout_url;
+    const checkoutUrl = res.data?.payment_link;
     if (!checkoutUrl) return alert("Could not get Flutterwave payment link.");
 
     setFlwDepositMessage("Redirecting to Flutterwave checkout...");
