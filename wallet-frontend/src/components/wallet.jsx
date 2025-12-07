@@ -89,6 +89,36 @@ const WalletHome = () => {
       });
   }, []);
 
+  useEffect(() => {
+    // Check for Flutterwave callback params (after redirect from payment)
+    const params = new URLSearchParams(window.location.search);
+    const paymentStatus = params.get('payment_status');
+    const message = params.get('message');
+    const txRef = params.get('tx_ref');
+
+    if (paymentStatus && txRef) {
+      // Show status message
+      if (paymentStatus.toLowerCase() === 'successful') {
+        setFlwDepositMessage(`✓ Payment successful! Your wallet is being credited.`);
+        // Refresh balance after a short delay to let webhook process
+        setTimeout(() => {
+          const token = localStorage.getItem("access_token");
+          axios.get("/user/profile/", {
+            headers: { Authorization: `Bearer ${token}` }
+          }).then((res) => {
+            setBalance(parseFloat(res.data.wallet_balance) || 0.0);
+            setTransactions(res.data.transactions || []);
+          });
+        }, 2000);
+      } else {
+        setFlwDepositMessage(`✗ Payment ${paymentStatus}: ${message || 'Please try again.'}`);
+      }
+
+      // Clean up URL params
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
 // Deposit
   const handleDeposit = async () => {
     const amount = prompt(`Enter deposit amount (${walletCurrency}):`);

@@ -1143,31 +1143,30 @@ def flutterwave_deposit(request):
 
 
 
-@api_view(["GET", "POST"])
-@permission_classes([AllowAny])
-@csrf_exempt
 def flutterwave_callback(request):
     """
-    Minimal callback/redirect handler for Flutterwave.
+    Redirect handler for Flutterwave payment redirect after checkout.
 
-    Flutterwave will redirect the payer back to `FLW_REDIRECT_URL` after
-    payment. This endpoint accepts a `tx_ref` (query param or POST data)
-    and returns basic status information about the pending WalletTransaction.
-    The authoritative webhook that updates transaction status is handled
-    by `flutterwave_webhook` in `wallet/webhook.py`.
+    Flutterwave redirects the payer here after payment attempt. This endpoint
+    checks the transaction status and redirects back to the frontend with
+    the payment result so the frontend can show a confirmation/error message.
+    The authoritative webhook (flutterwave_webhook) updates wallet balances.
     """
-    try:
-        tx_ref = request.GET.get('tx_ref') or request.data.get('tx_ref') if hasattr(request, 'data') else None
-    except Exception:
-        tx_ref = None
+    tx_ref = request.GET.get('tx_ref')
+    status_param = request.GET.get('status', 'unknown')
 
     if not tx_ref:
-        return Response({'error': 'tx_ref query parameter is required'}, status=400)
+        # No tx_ref; redirect to frontend with error
+        return redirect('http://localhost:5173/wallet?payment_status=error&message=Missing+transaction+reference')
 
-    # Try to find a pending WalletTransaction created at initialization
+    # Look up the WalletTransaction to confirm it exists
     tx = WalletTransaction.objects.filter(reference=tx_ref).first()
-
+    
     if not tx:
-        return Response({'status': 'unknown', 'tx_ref': tx_ref})
+        return redirect(f'http://localhost:5173/wallet?payment_status=unknown&tx_ref={tx_ref}')
 
-    return Response({'status': tx.status, 'tx_ref': tx_ref, 'amount': str(tx.amount), 'user_id': tx.user.id})
+    # Build redirect URL with payment status and details
+    # Frontend will use these query params to show confirmation or retry UI
+    message = 'Payment successful - your wallet is being credited' if status_param.lower() == 'successful' else 'Payment failed or cancelled'
+    
+    return redirect(f'http://localhost:5173/wallet?payment_status={status_param}&tx_ref={tx_ref}&amount={tx.amount}&message={message}')
