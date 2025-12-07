@@ -12,10 +12,12 @@ from rest_framework.response import Response
 
 from django.conf import settings
 from .models import WalletTransaction, Wallet
+from .models import Transaction
+
 
 logger = logging.getLogger(__name__)
 
-FLW_SECRET = settings.FLW_SECRET_KEY  # Make sure this is from .env / settings
+FLW_SECRET = settings.FLW_SECRET_KEY  # This is your secret key
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -63,13 +65,38 @@ def flutterwave_webhook(request):
         if not tx:
             logger.warning("No matching WalletTransaction found for tx_ref: %s", tx_ref)
             return Response({"status": "ignored"})
+        
+        #find the pending WalletTransaction
+        tx = WalletTransaction.objects.filter(reference=tx_ref, status="pending").first()
+        if not tx:
+            logger.warning("No matching WalletTransaction found for tx_ref: %s", tx_ref)
+            return Response({"status": "ignored"})
+        
+        #successful transaction
 
         if status.lower() == "successful":
             tx.status = "success"
+            tx.save()
+
             # Update user wallet balance
             wallet = Wallet.objects.get(user=tx.user)
             wallet.balance += Decimal(amount)
             wallet.save()
+
+
+            # Record the transaction
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type="DEPOSIT",
+                amount=Decimal(amount),
+                description=f"Flutterwave deposit: {tx_ref}",
+                counterparty=customer_email,
+                currency_from=currency,
+                currency_to=wallet.currency,
+                exchange_rate=Decimal('1.00'),
+                status="success",
+
+            )
         else:
             tx.status = "failed"
 

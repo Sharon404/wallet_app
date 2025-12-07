@@ -1135,7 +1135,8 @@ def flutterwave_deposit(request):
         type="deposit",
         amount=Decimal(str(amount)),
         reference=flw["tx_ref"],
-        status="pending"
+        status="pending",
+
 )
 
     return Response({"payment_link": data["link"]})
