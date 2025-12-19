@@ -20,6 +20,7 @@ from .views import (
     mpesa_b2c_result,
     flutterwave_deposit,
     flutterwave_callback,
+    flutterwave_withdraw,
 )
 
 urlpatterns = [
@@ -43,6 +44,7 @@ urlpatterns = [
     path("flutterwave/deposit/", flutterwave_deposit, name='flutterwave_deposit'),
     path("flutterwave/callback/", flutterwave_callback, name='flutterwave_callback'),
     path("flutterwave/webhook/", flutterwave_webhook, name='flutterwave_webhook'),
+    path("flutterwave/withdraw/", flutterwave_withdraw, name='flutterwave_withdraw'),
 
 
 

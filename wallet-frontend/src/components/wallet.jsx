@@ -47,6 +47,14 @@ const WalletHome = () => {
   const [showFlwDeposit, setShowFlwDeposit] = useState(false);
   const [flwDepositAmount, setFlwDepositAmount] = useState("");
   const [flwDepositMessage, setFlwDepositMessage] = useState("");
+  // Flutterwave Withdrawal
+  const [showFlwWithdraw, setShowFlwWithdraw] = useState(false);
+  const [flwWithdrawAmount, setFlwWithdrawAmount] = useState("");
+  const [flwAcctBank, setFlwAcctBank] = useState("");
+  const [flwAcctNumber, setFlwAcctNumber] = useState("");
+  const [flwAcctName, setFlwAcctName] = useState("");
+  const [flwWithdrawPin, setFlwWithdrawPin] = useState("");
+  const [flwWithdrawMessage, setFlwWithdrawMessage] = useState("");
 
 
 
@@ -488,6 +496,86 @@ const handleFlutterwaveDeposit = async () => {
 };
 
 
+const handleFlutterwaveWithdraw = async () => {
+  const amount = parseFloat(flwWithdrawAmount);
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return setFlwWithdrawMessage('Enter a valid amount.');
+  }
+  if (!flwAcctBank || !flwAcctNumber) {
+    return setFlwWithdrawMessage('Enter bank code and account number.');
+  }
+  if (!flwWithdrawPin || flwWithdrawPin.length !== 6) {
+    return setFlwWithdrawMessage('Enter your 6-digit PIN.');
+  }
+
+  try {
+    const token = localStorage.getItem('access_token');
+    const res = await axios.post(
+      '/flutterwave/withdraw/',
+      {
+        amount: flwWithdrawAmount,
+        account_bank: flwAcctBank,
+        account_number: flwAcctNumber,
+        account_name: flwAcctName,
+        pin: flwWithdrawPin,
+      },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    setFlwWithdrawMessage('Withdrawal initiated — awaiting provider confirmation.');
+    setFlwWithdrawAmount('');
+    setFlwAcctBank('');
+    setFlwAcctNumber('');
+    setFlwAcctName('');
+    setFlwWithdrawPin('');
+
+    // reflect immediate deducted balance from server
+    setBalance(parseFloat(res.data.wallet_balance || balance));
+
+    const ref = res.data.reference;
+    if (ref) {
+      let attempts = 0;
+      const maxAttempts = 30;
+      const intervalMs = 2000;
+
+      const poll = async () => {
+        try {
+          const token = localStorage.getItem('access_token');
+          const statusRes = await axios.get('/mpesa/withdraw/status/', {
+            params: { reference: ref },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          const s = statusRes.data?.status;
+          if (s === 'success') {
+            setFlwWithdrawMessage('Withdrawal successful — funds sent.');
+            await fetchTransactions();
+            return;
+          }
+          if (s === 'failed') {
+            setFlwWithdrawMessage('Withdrawal failed — refund processed.');
+            await fetchTransactions();
+            return;
+          }
+
+          attempts += 1;
+          if (attempts < maxAttempts) setTimeout(poll, intervalMs);
+          else setFlwWithdrawMessage('Still pending — we will update when it completes.');
+        } catch (err) {
+          attempts += 1;
+          if (attempts < maxAttempts) setTimeout(poll, intervalMs);
+          else setFlwWithdrawMessage('Error checking withdraw status — refresh later.');
+        }
+      };
+
+      setTimeout(poll, 2000);
+    }
+  } catch (err) {
+    setFlwWithdrawMessage(err.response?.data?.error || 'Flutterwave withdrawal failed.');
+  }
+};
+
+
 
   if (loading) return <p style={{ textAlign: "center" }}>Loading wallet...</p>;
 
@@ -602,6 +690,59 @@ const handleFlutterwaveDeposit = async () => {
               Proceed to Pay
             </button>
             {flwDepositMessage && <p style={{ color: "blue", marginTop: 8 }}>{flwDepositMessage}</p>}
+          </div>
+        )}
+
+        <button
+          style={{ ...styles.button, backgroundColor: "#0056b3", marginTop: 10 }}
+          onClick={() => setShowFlwWithdraw(!showFlwWithdraw)}
+        >
+          Withdraw via Flutterwave (Bank Transfer)
+        </button>
+
+        {showFlwWithdraw && (
+          <div style={{ background: "#fffaf0", padding: 15, borderRadius: 8, marginTop: 10 }}>
+            <h4>Flutterwave Withdraw</h4>
+            <input
+              type="text"
+              placeholder="Bank code"
+              value={flwAcctBank}
+              onChange={(e) => setFlwAcctBank(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="text"
+              placeholder="Account number"
+              value={flwAcctNumber}
+              onChange={(e) => setFlwAcctNumber(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="text"
+              placeholder="Account name (optional)"
+              value={flwAcctName}
+              onChange={(e) => setFlwAcctName(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="number"
+              placeholder={`Amount (${walletCurrency})`}
+              value={flwWithdrawAmount}
+              onChange={(e) => setFlwWithdrawAmount(e.target.value)}
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <input
+              type="text"
+              placeholder="6-Digit PIN"
+              value={flwWithdrawPin}
+              onChange={(e) => setFlwWithdrawPin(e.target.value.slice(0, 6).replace(/\D/g, ""))}
+              maxLength="6"
+              style={{ width: "100%", padding: "8px", margin: "8px 0" }}
+            />
+            <button onClick={handleFlutterwaveWithdraw} style={{ ...styles.button, width: "100%" }}>
+              Initiate Withdrawal
+            </button>
+            {flwWithdrawMessage && <p style={{ color: flwWithdrawMessage.includes("failed") ? "red" : "green", marginTop: 8 }}>{flwWithdrawMessage}</p>}
           </div>
         )}
 

@@ -1171,3 +1171,88 @@ def flutterwave_callback(request):
     message = 'Payment successful - your wallet is being credited' if status_param.lower() == 'successful' else 'Payment failed or cancelled'
     
     return redirect(f'http://localhost:5173/wallet?payment_status={status_param}&tx_ref={tx_ref}&amount={tx.amount}&message={message}')
+
+
+@csrf_exempt
+@api_view(["POST"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def flutterwave_withdraw(request):
+    """Initiate a Flutterwave bank transfer withdrawal from user's wallet.
+
+    Expected JSON: { amount, account_bank, account_number, account_name (optional), pin }
+    """
+    account_bank = request.data.get('account_bank')
+    account_number = request.data.get('account_number')
+    account_name = request.data.get('account_name')
+    amount_str = request.data.get('amount')
+    pin = request.data.get('pin')
+
+    if not pin:
+        return Response({"error": "PIN required for withdrawal"}, status=400)
+
+    if not request.user.check_pin(pin):
+        return Response({"error": "Invalid PIN"}, status=401)
+
+    try:
+        amount = Decimal(str(amount_str))
+    except Exception:
+        return Response({"error": "Invalid amount"}, status=400)
+
+    wallet = Wallet.objects.get(user=request.user)
+    if wallet.balance < amount:
+        return Response({"error": "Insufficient balance"}, status=400)
+
+    # Try to create beneficiary (optional) then initiate transfer
+    try:
+        # We can either create a beneficiary or transfer directly using bank details
+        provider_res = initiate_transfer(
+            amount=amount,
+            account_bank=account_bank,
+            account_number=account_number,
+            narration=f"Wallet withdrawal for user {request.user.id}"
+        )
+    except Exception as e:
+        logger.exception("Flutterwave transfer initiation failed: %s", e)
+        return Response({"error": "Failed to initiate transfer"}, status=500)
+
+    # Use provider reference if available, otherwise create our own
+    reference = provider_res.get('reference') or provider_res.get('data', {}).get('reference') or str(uuid.uuid4())
+
+    # Deduct balance and create pending records
+    try:
+        with transaction.atomic():
+            wallet.balance -= amount
+            wallet.save()
+
+            WalletTransaction.objects.create(
+                user=request.user,
+                phone=account_number,
+                amount=amount,
+                type='withdraw',
+                status='pending',
+                reference=reference
+            )
+
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='WITHDRAWAL',
+                amount=amount,
+                currency_from=getattr(wallet, 'currency', 'KES'),
+                currency_to=getattr(wallet, 'currency', 'KES'),
+                converted_amount=amount,
+                status='PENDING',
+                description=f'Flutterwave withdraw reference {reference} to {account_number}'
+            )
+    except Exception as e:
+        logger.exception('Failed to create pending withdraw records: %s', e)
+        return Response({"error": "Server error creating withdrawal record"}, status=500)
+
+    payload = {
+        'flutterwave_response': provider_res,
+        'reference': reference,
+        'wallet_balance': str(wallet.balance),
+        'message': 'Withdrawal initiated — awaiting provider confirmation.'
+    }
+
+    return Response(payload)
