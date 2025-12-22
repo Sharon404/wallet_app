@@ -39,6 +39,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import parser_classes
 import json
 import hashlib, hmac
+import os
 from wallet.flutterwave import create_beneficiary, initiate_transfer
 
 
@@ -1188,8 +1189,31 @@ def flutterwave_withdraw(request):
     amount_str = request.data.get('amount')
     pin = request.data.get('pin')
 
+    # Debug: log auth header + incoming payload to diagnose 401 Unauthorized
+    try:
+        auth_hdr = request.META.get('HTTP_AUTHORIZATION')
+        logger.info("[FLW WITHDRAW] Authorization header: %s", auth_hdr)
+        logger.info("[FLW WITHDRAW] request.user: %s authenticated=%s", getattr(request, 'user', None), getattr(request.user, 'is_authenticated', False))
+        logger.info("[FLW WITHDRAW] incoming payload keys: %s", list(request.data.keys()) if hasattr(request, 'data') else 'no-data')
+    except Exception:
+        logger.exception('Failed to log withdraw debug info')
+
     if not pin:
         return Response({"error": "PIN required for withdrawal"}, status=400)
+
+    # If the view reached here but request.user is not authenticated (401 occurred),
+    # attempt manual JWT authentication to give clearer logs and allow dev testing
+    try:
+        if not getattr(request, 'user', None) or not getattr(request.user, 'is_authenticated', False):
+            auth = JWTAuthentication()
+            auth_result = auth.authenticate(request)
+            if auth_result:
+                request.user, _ = auth_result
+                logger.info('[FLW WITHDRAW] Manually authenticated user via JWT: %s', request.user)
+            else:
+                logger.info('[FLW WITHDRAW] Manual JWT authenticate returned no result')
+    except Exception:
+        logger.exception('[FLW WITHDRAW] Manual JWT authentication failed')
 
     if not request.user.check_pin(pin):
         return Response({"error": "Invalid PIN"}, status=401)
@@ -1205,15 +1229,35 @@ def flutterwave_withdraw(request):
 
     # Try to create beneficiary (optional) then initiate transfer
     try:
-        # We can either create a beneficiary or transfer directly using bank details
-        provider_res = initiate_transfer(
-            amount=amount,
-            account_bank=account_bank,
-            account_number=account_number,
-            narration=f"Wallet withdrawal for user {request.user.id}"
-        )
+        # Validate required bank details
+        if not account_bank or not account_number:
+            return Response({"error": "account_bank and account_number are required"}, status=400)
+
+        # Development fallback: when DEBUG=True, allow mocking transfers locally
+        # This avoids Flutterwave's IP-whitelisting requirement during local testing.
+        from django.conf import settings as _settings
+        if getattr(_settings, 'DEBUG', False) and os.getenv('FLW_MOCK_TRANSFERS', '1') == '1':
+            reference = str(uuid.uuid4())
+            provider_res = {
+                'status': 'success',
+                'data': {'id': 'mock', 'reference': reference},
+                'reference': reference
+            }
+            logger.info('[FLW WITHDRAW] Using MOCK provider_res (DEBUG) payload')
+        else:
+            # We can either create a beneficiary or transfer directly using bank details
+            provider_res = initiate_transfer(
+                amount=amount,
+                account_bank=account_bank,
+                account_number=account_number,
+                narration=f"Wallet withdrawal for user {request.user.id}"
+            )
     except Exception as e:
         logger.exception("Flutterwave transfer initiation failed: %s", e)
+        # Return provider error details in DEBUG mode to help debugging locally
+        from django.conf import settings as _settings
+        if getattr(_settings, 'DEBUG', False):
+            return Response({"error": "Failed to initiate transfer", "details": str(e)}, status=500)
         return Response({"error": "Failed to initiate transfer"}, status=500)
 
     # Use provider reference if available, otherwise create our own

@@ -72,7 +72,15 @@ def initiate_withdrawal(amount, account_bank, account_number, narration="Wallet 
         headers=HEADERS,
         timeout=30
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError:
+        try:
+            err = resp.json()
+        except Exception:
+            err = {"status_code": resp.status_code, "text": resp.text}
+        err["payload_sent"] = payload
+        raise Exception(f"Flutterwave transfer error: {err}")
 
     data = resp.json()
     data["reference"] = reference
@@ -129,7 +137,18 @@ def initiate_transfer(beneficiary_code=None, amount=None, account_bank=None, acc
         headers=HEADERS,
         timeout=30
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError:
+        # Try to return the JSON error body to aid debugging
+        try:
+            err = resp.json()
+        except Exception:
+            err = {"status_code": resp.status_code, "text": resp.text}
+        # Attach original payload for diagnosis
+        err["payload_sent"] = payload
+        raise Exception(f"Flutterwave transfer error: {err}")
+
     data = resp.json()
     data["reference"] = reference
     return data
