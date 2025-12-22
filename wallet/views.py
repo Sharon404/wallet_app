@@ -878,6 +878,7 @@ def get_stk_status(request):
 
 
 @api_view(["GET"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def get_withdraw_status(request):
     """Return the status of a withdraw WalletTransaction by our internal reference.
@@ -887,6 +888,26 @@ def get_withdraw_status(request):
     reference = request.query_params.get('reference') or request.GET.get('reference')
     if not reference:
         return Response({'error': 'reference query parameter is required'}, status=400)
+
+    # Perform safe manual JWT authentication if an Authorization header is present.
+    # We disable automatic authentication for this view (see decorator) to avoid
+    # DRF returning 401 when an invalid/expired token is provided. Instead we
+    # try to authenticate manually and ignore failures so unauthenticated clients
+    # can still query status.
+    try:
+        auth_hdr = request.META.get('HTTP_AUTHORIZATION')
+        if auth_hdr:
+            try:
+                auth = JWTAuthentication()
+                auth_result = auth.authenticate(request)
+                if auth_result:
+                    request.user, _ = auth_result
+            except Exception:
+                # Ignore authentication errors and continue as unauthenticated
+                logger.info('Withdraw status: manual JWT auth failed or expired token; continuing unauthenticated')
+
+    except Exception:
+        logger.exception('Error during manual auth for withdraw status')
 
     try:
         tx = WalletTransaction.objects.filter(reference=reference).order_by('-id').first()
